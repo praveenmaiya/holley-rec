@@ -1,0 +1,33 @@
+# Evaluation metrics configuration
+
+# Ranking metrics to compute
+ranking_metrics:
+  - precision
+  - recall
+  - ndcg
+  - map
+  - mrr
+
+# K values for top-K metrics
+k_values:
+  - 5
+  - 10
+  - 20
+  - 50
+
+# Coverage metrics
+coverage_metrics:
+  - catalog_coverage
+  - user_coverage
+  - diversity
+
+# Primary metric for comparison
+primary_metric: ndcg_at_10
+
+# Metrics to log to W&B
+wandb_metrics:
+  - precision_at_10
+  - recall_at_10
+  - ndcg_at_10
+  - map
+  - catalog_coverage

@@ -1,0 +1,42 @@
+# Development configuration
+# Project ID comes from environment: export PROJECT_ID=your-project
+
+project_id: ${PROJECT_ID:-temp_holley_v5}
+dataset: recommendations_dev
+location: US
+
+# GCS paths
+gcs:
+  bucket: ${GCS_BUCKET:-holley-models-dev}
+  model_prefix: models/
+  data_prefix: data/
+
+# W&B configuration
+wandb:
+  project: holley-rec
+  entity: ${WANDB_ENTITY:-}
+  tags:
+    - dev
+
+# Model parameters
+model:
+  algorithm: als
+  factors: 64
+  regularization: 0.01
+  iterations: 10
+  random_state: 42
+
+# Data limits for development
+limits:
+  max_users: 10000
+  max_items: 5000
+  max_interactions: 100000
+
+# Evaluation
+eval:
+  k_values:
+    - 5
+    - 10
+    - 20
+  split_type: time
+  train_ratio: 0.8

@@ -1,0 +1,21 @@
+# Evaluation thresholds - fail if below these values
+
+# Absolute thresholds (minimum acceptable)
+absolute:
+  precision_at_10: 0.15
+  recall_at_10: 0.08
+  ndcg_at_10: 0.12
+  map: 0.10
+  catalog_coverage: 0.05
+  user_coverage: 0.95
+
+# Regression thresholds (max allowed drop vs baseline)
+regression:
+  max_percent_drop: 5.0  # Fail if any metric drops more than 5%
+
+  # Per-metric overrides (optional)
+  # precision_at_10: 3.0  # Stricter for precision
+
+# Improvement thresholds (for updating baseline)
+improvement:
+  min_percent_gain: 2.0  # Only update baseline if primary metric improves by 2%+

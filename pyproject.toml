@@ -1,0 +1,63 @@
+[project]
+name = "holley-rec"
+version = "0.1.0"
+description = "Recommendation system for Holley automotive parts"
+requires-python = ">=3.12"
+readme = "README.md"
+
+dependencies = [
+    "google-cloud-bigquery>=3.0",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "implicit>=0.7",
+    "faiss-cpu>=1.7",
+    "metaflow>=2.10",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "wandb>=0.15",
+    "google-cloud-storage>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-mock>=3.0",
+    "ruff>=0.1",
+    "mypy>=1.0",
+    "pre-commit>=3.0",
+    "jupyter>=1.0",
+    "ipykernel>=6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.isort]
+known-first-party = ["src"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+markers = [
+    "integration: marks tests as integration (require cloud credentials)",
+    "e2e: marks tests as end-to-end (slow, expensive)",
+]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["tests/*"]

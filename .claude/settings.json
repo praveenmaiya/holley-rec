@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bq query:*)",
+      "Bash(make:*)",
+      "Bash(pytest:*)",
+      "Bash(python scripts/*)",
+      "Bash(ruff:*)",
+      "Bash(mypy:*)"
+    ]
+  }
+}
