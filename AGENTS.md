@@ -1,51 +1,60 @@
 # Holley Recommendation System
 
-Automotive parts recommendations using collaborative filtering.
+Vehicle fitment recommendations for automotive parts using collaborative filtering.
 
 ## Stack
-- Python 3.12+, uv, BigQuery (bq CLI), Metaflow, W&B
-- Models: GCS bucket | Experiments: W&B
+- Python 3.12+, uv, BigQuery (bq CLI), MLflow, W&B
+- Output: `auxia-reporting.temp_holley_v5_4`
 
-## Workflow Modes
+## Workflow: Plan → Code → Review
 
-### PLAN - Before new features
-1. Create spec: `specs/active/<feature>.md`
-2. Define: problem, data, output, eval criteria
+### PLAN
+1. Create spec in `specs/` using template
+2. Define: problem, data, output, validation
 3. ASK if unclear - don't assume
 
-### CODE - Implementing
-1. Reference spec and `@agent_docs/`
-2. Use `--test-mode` for BQ queries
-3. Log experiments to W&B
+### CODE
+1. Reference `@agent_docs/` for patterns
+2. Use existing SQL in `sql/recommendations/`
+3. Run `bq query --dry_run` before execution
 
-### REVIEW - Before PR
-1. `make test` + `make lint` must pass
-2. `make eval` - check metrics vs baseline
+### REVIEW
+1. Run `sql/validation/qa_checks.sql`
+2. Verify: 450K users, 0 duplicates, prices ≥$20
 3. Update docs if architecture changed
 
-## Directories
-- `specs/` - Feature specs (Plan mode)
-- `sql/recommendations/` - BQ queries
-- `src/` - Production code
-- `flows/` - Metaflow pipelines
-- `evals/` - Evaluation datasets & scripts
-- `notebooks/` - Prototypes (convert to src/)
+## Key Files
+
+| Path | Purpose |
+|------|---------|
+| `sql/recommendations/v5_6_*.sql` | Production pipeline |
+| `sql/validation/qa_checks.sql` | QA validation |
+| `agent_docs/architecture.md` | System design, scoring |
+| `agent_docs/bigquery.md` | Event schema, SQL gotchas |
+| `specs/v5_6_recommendations.md` | Current spec |
+| `configs/dev.yaml` | Configuration |
 
 ## Commands
 ```bash
-make test          # Run tests
-make lint          # Ruff + mypy
-make eval          # Offline evaluation
-make sql-validate  # Validate SQL
-python scripts/run_training.py --config configs/dev.yaml --test-mode
+# Validate SQL
+bq query --dry_run --use_legacy_sql=false < sql/recommendations/v5_6_*.sql
+
+# Run pipeline
+bq query --use_legacy_sql=false < sql/recommendations/v5_6_*.sql
+
+# Run QA checks
+bq query --use_legacy_sql=false < sql/validation/qa_checks.sql
+
+# Python
+make test && make lint
 ```
 
-## Docs (read before coding)
-- @agent_docs/architecture.md
-- @agent_docs/bigquery_patterns.md
-- @agent_docs/evaluation_guide.md
-
-## Rules
+## Critical Rules
 - Never hardcode project IDs (use configs/)
-- Always run evals before merging model changes
-- Log all experiments to W&B
+- Always COALESCE(string_value, long_value) for event properties
+- Run qa_checks.sql after any pipeline change
+- Max 2 SKUs per PartType (diversity filter)
+
+## Docs (read before coding)
+- `@agent_docs/architecture.md` - Pipeline, scoring formula
+- `@agent_docs/bigquery.md` - Event bugs, SQL patterns
