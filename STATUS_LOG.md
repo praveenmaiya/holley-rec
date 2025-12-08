@@ -5,6 +5,122 @@
 
 ---
 
+## 2025-12-06 (Friday)
+
+### Focus: Post-Launch Campaign Performance Analysis
+
+Email campaign launched Dec 4th. Analyzed interactions data and built reporting queries to track performance.
+
+---
+
+#### 1. Data Discovery
+
+**Why**: Colleague asked "Do we have any interactions data/performance tracking?" - needed to investigate what's available.
+
+**How**: Explored `auxia-gcp.company_1950` dataset for treatment-related tables.
+
+**Key Tables Found**:
+
+| Table | Purpose |
+|-------|---------|
+| `treatment_history` | Who received what treatment |
+| `treatment_interaction` | Opens (VIEWED), Clicks (CLICKED) |
+| `treatment_delivery_result_for_batch_decision` | Delivery success/failure |
+| `ingestion_unified_schema_incremental` | Order events with revenue |
+
+**Outcome**: Confirmed interactions data exists and is being tracked.
+
+---
+
+#### 2. Full Funnel Analysis
+
+**Why**: Understand complete customer journey from email send to purchase.
+
+**How**: Built SQL queries joining treatment, interaction, and order tables.
+
+**Funnel Results (Dec 4-6)**:
+
+| Stage | Users | Rate |
+|-------|------:|-----:|
+| Sent | 34,057 | 100% |
+| Delivered | 25,252 | 74.1% |
+| Opened | 3,670 | 10.8% |
+| Clicked | 318 | 0.93% |
+| Ordered | 176 | 0.52% |
+
+**Outcome**: Complete visibility into campaign performance.
+
+---
+
+#### 3. Revenue Attribution
+
+**Why**: Quantify business impact of email campaign.
+
+**How**: Joined order events with treatment history, calculated revenue by conversion path.
+
+**Results**:
+
+| Conversion Path | Users | Revenue |
+|-----------------|------:|--------:|
+| Opened → Ordered | 10 | $3,864 |
+| Delivered → Ordered (no open tracked) | 108 | $47,418 |
+| Sent → Ordered (unknown) | 58 | $22,014 |
+| **Total** | **176** | **$73,297** |
+
+**Key Metrics**:
+- Average order value: $416 (vs $400 for non-recipients)
+- Most orders: 1-2 days after email (58 orders)
+- Peak engagement: 4-7 PM UTC
+
+**Outcome**: $73K revenue attributable to email campaign.
+
+---
+
+#### 4. Known Issues Identified
+
+| Issue | Impact | Root Cause |
+|-------|--------|------------|
+| Dec 5-6 interaction data lag | 166 orders show "no open tracked" | Pipeline delay (~half day) |
+| 1,896 delivery failures | 7% failure rate | Klaviyo rate limits + API errors |
+| No click-to-order attribution | 0 users clicked then ordered | May be data lag or direct visits |
+
+---
+
+#### 5. SQL Queries Created
+
+**Files Created**:
+- `sql/reporting/campaign_performance.sql` - General performance queries
+- `sql/reporting/campaign_funnel_analysis.sql` - Deep funnel analysis with revenue
+
+**Query Categories**:
+1. Complete funnel metrics
+2. Conversion paths with revenue
+3. Revenue by date
+4. Time to purchase distribution
+5. Funnel by treatment ID
+6. Failure analysis
+7. Email vs non-email comparison
+8. Hourly engagement patterns
+9. Opened-then-ordered details
+10. Summary metrics (single row)
+
+**Outcome**: Reusable reporting queries for ongoing campaign monitoring.
+
+---
+
+### Day Summary
+
+| Category | Status |
+|----------|--------|
+| Data Discovery | Complete - 4 key tables identified |
+| Funnel Analysis | 34K sent → 25K delivered → 3.7K opened → 318 clicked → 176 ordered |
+| Revenue Attribution | $73,297 from 176 orders |
+| Avg Order Value | $416 (higher than baseline $400) |
+| SQL Queries | 2 files, 10+ reusable queries |
+| Known Issues | Interaction data lag, delivery failures |
+
+---
+
 ## 2025-12-05 (Thursday)
 
 ### Focus: Documentation Consolidation & Project Migration
