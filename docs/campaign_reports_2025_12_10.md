@@ -46,10 +46,16 @@ Post-Purchase Email Campaign Performance Update
 
 ### Key Observations
 
-1. **Revenue continues growing**: $158K total from Dec 4 cohort (up from $73K)
+1. **Revenue continues growing**: $158K total from Dec 4 cohort (up from $73K), demonstrating strong 6-day tail
 2. **358 users ordered** after receiving email (up from 120)
-3. **Long conversion window**: Orders still coming in 6 days post-send
-4. **Daily sends started Dec 7**: Campaign transitioned to daily sends
+3. **Daily sends started Dec 7**: Additional cohorts sent on Dec 7 (11K), Dec 8 (10K), Dec 9 (8K), Dec 10 (4K)
+4. **Long conversion window**: Orders still coming in 6 days post-send - automotive parts have long consideration cycles
+5. **Click-to-Open Rate**: ~8.9% (consistent with Sunday's 8.0%)
+
+### Campaign Status
+
+- **Total users sent (all cohorts)**: 41,834
+- **Campaign is now running daily** with ongoing sends
 
 ---
 
