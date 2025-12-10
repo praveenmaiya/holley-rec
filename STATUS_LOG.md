@@ -7,133 +7,33 @@
 
 ## 2025-12-09 (Monday)
 
-### Focus: Email Treatment Click Bandit Model - Discovery & Planning
+### Focus: Email Treatment Click Bandit - Implementation Complete
 
-Analyzing JCOM's Thompson Sampling bandit model for email treatment optimization and planning adaptation for Holley (company_1950).
+Built Thompson Sampling bandit analysis for email treatment optimization. Adapted from JCOM's model.
 
----
+**Deliverables:**
+- `src/bandit_click_holley.py` - Beta-Binomial Thompson Sampling analysis
+- `flows/metaflow_runner.py` - K8s runner via Metaflow
+- `flows/run.sh` - Wrapper script
+- `configs/metaflow/config.json` - K8s cluster config
+- `flows/README.md` - Setup instructions
 
-#### 1. Notebook Analysis
+**K8s Run Results:**
+| Metric | Value |
+|--------|-------|
+| Treatments | 24 |
+| Views | 5,598 |
+| Clicks | 412 |
+| Overall CTR | 7.36% |
 
-**Why**: Need to build post-campaign email treatment optimization for Holley, similar to JCOM's existing system.
+**Top Performers (by volume):**
+| Treatment | Views | CTR |
+|-----------|-------|-----|
+| 17049625 | 1,318 | 10.3% |
+| 16490939 | 2,320 | 6.1% |
+| 16150707 | 1,049 | 7.5% |
 
-**How**: Reviewed `notebooks/JCOM_Treatment_Click_Bandit_Model_Prod2 (1).ipynb` from JCOM (company_1925).
-
-**Algorithm**: Normal-Inverse-Gamma Thompson Sampling
-
-| Aspect | Details |
-|--------|---------|
-| Objective | Maximize email CTR by selecting best treatment per user |
-| Reward | Binary (clicked / not clicked) |
-| Training Window | 60 days |
-| Scoring | `score = mean + stddev × N(0,1)` |
-| Seed | Hash of `treatment_id:user_id@day` (deterministic, refreshes daily) |
-
-**Key Components**:
-1. **Data**: `treatment_history_sent` + `email_interactions_table` (JCOM uses different table name)
-2. **Bandit**: `NormalInverseGammaClickBandit` from auxia library
-3. **Model**: `BanditClickModel(tf.Module)` with TF lookup tables
-4. **Deployment**: TF Serving via `tensorflow_model.push()`
-
-**Outcome**: Full understanding of JCOM bandit implementation.
-
----
-
-#### 2. Holley Data Discovery
-
-**Why**: Verify data availability for Holley before adapting the notebook.
-
-**How**: Queried BigQuery for treatment tables and interaction data.
-
-**Tables Found** (company_1950):
-
-| Table | Purpose |
-|-------|---------|
-| `treatment_history_sent` | Email send history |
-| `treatment_interaction` | Opens (VIEWED) & Clicks (CLICKED) |
-| `treatment_history` | General treatment history |
-| `treatment_eligibility_rule_evaluation` | Eligibility rules |
-| `treatment_delivery_result_for_batch_decision` | Batch delivery results |
-
-**Key Differences from JCOM**:
-
-| Aspect | JCOM (1925) | Holley (1950) |
-|--------|-------------|---------------|
-| Interaction table | `email_interactions_table` | `treatment_interaction` |
-| Surface ID | 817 | 929 |
-| Treatments | 36 | 24 |
-| Data range | 60+ days | 5 days (Dec 4-9) |
-
-**Outcome**: Confirmed tables exist with compatible schema.
-
----
-
-#### 3. Campaign Performance Data
-
-**Why**: Understand CTR distribution and data volume for bandit training.
-
-**How**: Queried 60-day window of sends joined with opens/clicks.
-
-**Send Volume by Date**:
-
-| Date | Sends | Users | Treatments |
-|------|-------|-------|------------|
-| Dec 4 | 25,689 | 25,689 | 28 |
-| Dec 7 | 11,196 | 11,196 | 11 |
-| Dec 8 | 9,580 | 9,580 | 11 |
-| Dec 9 | 8,146 | 8,134 | 11 |
-
-**CTR by Treatment** (high-volume treatments):
-
-| Treatment ID | Opens | Clicks | CTR |
-|--------------|-------|--------|-----|
-| 17049625 | 1,318 | 136 | 10.3% |
-| 16150707 | 1,049 | 79 | 7.5% |
-| 16490939 | 2,320 | 142 | 6.1% |
-| 16444546 | 350 | 16 | 4.6% |
-
-**Interaction Totals**:
-- Opens: 5,686 unique
-- Clicks: 470 unique
-- Average CTR: ~7% (higher than JCOM's ~2.2%)
-
-**Outcome**: Sufficient data to train bandit model, though limited history (5 days vs 60).
-
----
-
-#### 4. Concerns & Decisions
-
-| Concern | Impact | Decision |
-|---------|--------|----------|
-| Limited data (5 days) | High variance in CTR estimates | Use all available data, not 60-day window |
-| Small sample sizes | Some treatments <50 opens | NIG prior will handle exploration |
-| Single surface | Only surface_id 929 | Proceed with single surface |
-
----
-
-### Next Steps
-
-1. **Adapt notebook** for Holley:
-   - `company_1925` → `company_1950`
-   - `email_interactions_table` → `treatment_interaction`
-   - `surface_id = 817` → `surface_id = 929`
-   - Adjust date window for limited history
-
-2. **Convert to production script** (Metaflow pipeline)
-
-3. **Deploy to TF Serving**
-
----
-
-### Day Summary
-
-| Category | Status |
-|----------|--------|
-| Notebook Analysis | Complete - NIG Thompson Sampling understood |
-| Data Discovery | Complete - tables verified for company_1950 |
-| Schema Comparison | Complete - minor table name difference |
-| CTR Analysis | Complete - 24 treatments, avg 7% CTR |
-| Adaptation | Pending - ready to proceed |
+**Run:** `./flows/run.sh src/bandit_click_holley.py`
 
 ---
 
