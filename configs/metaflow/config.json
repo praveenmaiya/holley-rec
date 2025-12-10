@@ -1,0 +1,6 @@
+{
+    "METAFLOW_DATASTORE_SYSROOT_GS": "gs://storage-auxia-ml-metaflow-dev/tf-full-stack-sysroot",
+    "METAFLOW_DEFAULT_DATASTORE": "gs",
+    "METAFLOW_DEFAULT_METADATA": "local",
+    "METAFLOW_KUBERNETES_SERVICE_ACCOUNT": "ksa-metaflow"
+}
