@@ -33,6 +33,10 @@ Vehicle fitment recommendations for automotive parts using collaborative filteri
 | `agent_docs/bigquery.md` | Event schema, SQL gotchas |
 | `specs/v5_6_recommendations.md` | Current spec |
 | `configs/dev.yaml` | Configuration |
+| `src/bandit_click_holley.py` | Email treatment Click Bandit analysis |
+| `flows/metaflow_runner.py` | K8s script runner via Metaflow |
+| `flows/run.sh` | Run scripts on K8s |
+| `flows/README.md` | Metaflow setup instructions |
 
 ## Commands
 ```bash
@@ -44,6 +48,9 @@ bq query --use_legacy_sql=false < sql/recommendations/v5_6_*.sql
 
 # Run QA checks
 bq query --use_legacy_sql=false < sql/validation/qa_checks.sql
+
+# Run Python script on K8s (via Metaflow)
+./flows/run.sh src/bandit_click_holley.py
 
 # Python
 make test && make lint
