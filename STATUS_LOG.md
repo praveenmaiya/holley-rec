@@ -5,6 +5,26 @@
 
 ---
 
+## Current State (Dec 11, 2025)
+
+| Item | Value |
+|------|-------|
+| Version | v5.6.2 |
+| Users | 456,119 |
+| Min Price | $50 |
+| Avg Price | $465.87 |
+| Revenue/User | $1,863.48 |
+| Last Commit | `5913c82` |
+
+**Recent Changes:**
+- Commodity filter (gaskets, bolts, decals excluded)
+- Variant dedup fix (RA003B/R/G deduplicated)
+- Intent window fixed to Sep 1, 2025
+
+**Backups:** `_2025_12_11_v3` (current), `_v2` (variant fix), `_v1` (pre-fix)
+
+---
+
 ## 2025-12-11 (Wednesday)
 
 ### Focus: Pipeline Refresh, Variant Dedup Fix & Commodity Filter
