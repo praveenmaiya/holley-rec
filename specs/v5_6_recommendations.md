@@ -1,9 +1,10 @@
 # V5.6 Vehicle Fitment Recommendations
 
-**Status**: ✅ Completed
-**Version**: 5.6
-**Last Run**: December 2025
-**Output**: `auxia-reporting.temp_holley_v5_4.final_vehicle_recommendations`
+**Status**: ✅ Production
+**Version**: 5.6.2 (Dec 11 commodity filter)
+**Last Run**: December 11, 2025
+**Production Table**: `auxia-reporting.company_1950_jp.final_vehicle_recommendations`
+**Working Table**: `auxia-reporting.temp_holley_v5_4.final_vehicle_recommendations`
 
 ---
 
@@ -49,25 +50,59 @@ final_vehicle_recommendations (450K rows):
 ```
 final_score = intent_score + popularity_score
 
-Intent (90-day, LOG-scaled):
+Intent (Sep 1 to current date, LOG-scaled):
   - Orders: LOG(1 + n) × 20
   - Carts:  LOG(1 + n) × 10
   - Views:  LOG(1 + n) × 2
   - None:   0 (cold-start)
 
-Popularity (324-day hybrid):
-  - LOG(1 + orders) × 2
+Popularity (hybrid, split at Sep 1):
+  - Historical: import_orders (Jan 10 - Aug 31)
+  - Recent: unified_events (Sep 1 - current)
+  - Score: LOG(1 + total_orders) × 2
 ```
+
+**Note**: Sep 1, 2025 is the fixed boundary between historical order data and real-time event data.
 
 ## Filters
 
-1. Price ≥ $20
+1. Price ≥ $50
 2. Has HTTPS image
 3. Not refurbished (`Tags != 'Refurbished'`)
 4. Not service SKU (EXT-, GIFT-, WARRANTY-, SERVICE-, PREAUTH-)
 5. Fits user's vehicle
 6. Not purchased in last 365 days
 7. Max 2 per PartType (diversity)
+8. **Variant dedup**: Only one SKU per base product (color variants deduplicated)
+9. **Commodity filter**: Exclude low-value parts (gaskets, decals, bolts, caps, etc.)
+
+### Commodity Filter (v5.6.2)
+
+Excludes low-value commodity parts that aren't compelling email recommendations:
+
+| Pattern | Excluded | Whitelisted |
+|---------|----------|-------------|
+| `%Gasket%` | All | - |
+| `%Decal%` | All | - |
+| `%Key%` | All | - |
+| `%Washer%` | All | - |
+| `%Clamp%` | All | - |
+| `%Bolt%` | Most | Engine Cylinder Head Bolt, Engine Bolt Kit |
+| `%Cap%` | Most | Distributor Cap Kits, Wheel Hub Cap, Wheel Cap Set |
+| `UNKNOWN` | Under $3,000 | $3,000+ (premium packages) |
+
+### Variant Deduplication (v5.6.1)
+
+Color/style variants are deduplicated using regex to extract base SKU:
+
+```sql
+REGEXP_REPLACE(sku, r'(-KIT|-BLK|-POL|-CHR|-RAW|-[A-Z0-9]{1,2}|[BRGP])$', '') AS base_sku
+```
+
+Examples:
+- `RA003B`, `RA003R`, `RA003G` → `RA003` (only highest scoring variant kept)
+- `8326-AR`, `8326-BR` → `8326`
+- `CI100038-A`, `CI100038-B` → `CI100038`
 
 ## Pipeline Steps
 
@@ -89,9 +124,10 @@ Popularity (324-day hybrid):
 | Users | ~450,000 |
 | Recs per user | 4 (exactly) |
 | Duplicate SKUs | 0 |
-| Price range | $20 - $2,500 |
+| Price range | $50 - $5,000 |
 | HTTPS images | 100% |
 | Refurbished | 0 |
+| Commodity parts | 0 |
 | Score ordering | rec1 ≥ rec2 ≥ rec3 ≥ rec4 |
 
 ## Known Issues
@@ -125,17 +161,35 @@ SELECT COUNT(*) as users,
 FROM `auxia-reporting.temp_holley_v5_4.final_vehicle_recommendations`'
 ```
 
-## Metrics (Production Run)
+## Metrics (Production Run - Dec 11, 2025)
 
 | Metric | Value |
 |--------|-------|
-| Users | 446,574 |
-| Price Range | $20.21 - $2,549.95 |
-| Avg Price | $210.74 |
-| Score Range | 1.39 - 18.32 |
-| Cold-Start % | 98.24% |
-| Unique SKU Combos | 1,651 |
+| Users | 456,119 |
+| Price Range | $50.57 - $5,165.95 |
+| Avg Price | $465.87 |
+| Duplicates | 0 |
+| Variant duplicates | 0 (fixed in v5.6.1) |
+| Commodity parts | 0 (filtered in v5.6.2) |
+
+### Run History
+
+| Date | Users | Notes |
+|------|-------|-------|
+| Dec 11, 2025 v3 | 456,119 | Commodity filter ($50 min, PartType exclusions) |
+| Dec 11, 2025 v2 | 458,826 | Variant dedup fix |
+| Dec 11, 2025 | 459,540 | Sep 1 intent window |
+| Dec 2, 2025 | 458,859 | Initial production |
+
+### Backups
+
+- `final_vehicle_recommendations_2025_12_11_v3` - Current production (commodity filter)
+- `final_vehicle_recommendations_2025_12_11_v2` - Variant dedup fix
+- `final_vehicle_recommendations_2025_12_11` - Pre-fix run
+- `final_vehicle_recommendations_2025_12_02` - Previous production
+
+**Detailed run stats**: See `docs/pipeline_run_stats.md` for comparison analysis.
 
 ---
 
-*Spec completed November 2025. SQL developed by ChatGPT, reviewed by Claude.*
+*Spec completed November 2025. SQL developed by ChatGPT, reviewed by Claude. Updated Dec 11, 2025 with commodity filter (v5.6.2).*

@@ -59,46 +59,59 @@ Post-Purchase Email Campaign Performance Update
 
 ---
 
-## 2. Treatments with Recommendations vs Without
+## 2. Personalized Fitment vs Static Recommendations
 
-### Summary Comparison
+**Note:** This analysis compares all 32 Live post-purchase email treatments:
+- **10 Personalized Fitment treatments** (ours) - use vehicle fitment recommendation system
+- **22 Static Recommendation treatments** - generic product recommendations
 
-| Metric | With Recs | Without Recs | Lift |
-|--------|-----------|--------------|------|
-| **Users Sent** | 7,852 | 33,983 | - |
-| **Open Rate** | 14.12% | 12.54% | **+12.6%** |
-| **Click Rate** | 1.69% | 1.02% | **+65.7%** |
-| **Click-to-Open Rate** | 11.99% | 8.09% | **+48.2%** |
-| **Order Rate** | 1.01% | 0.89% | **+13.5%** |
-| **Revenue** | $189K | $347K | - |
+### Summary Comparison (All Time)
+
+| Metric | Personalized Fitment (10) | Static Recs (22) | Lift |
+|--------|--------------------------|------------------|------|
+| **Users Sent** | 1,415 | 18,380 | - |
+| **Open Rate** | 25.72% | 12.61% | **+104%** |
+| **Click Rate** | 2.47% | 0.95% | **+160%** |
+| **Click-to-Open Rate** | 9.62% | 7.51% | +28% |
+| **Order Rate** | 1.34% | 0.78% | **+72%** |
+| **Total Revenue** | $29,778 | $88,824 | - |
+| **AOV** | $1,567 | $617 | **+154%** |
+| **Revenue per User Sent** | **$21.04** | **$4.83** | **+336%** |
 
 ### Key Findings
 
-Users with personalized product recommendations perform better across all metrics:
+Personalized Fitment treatments significantly outperform Static recommendations:
 
-1. **Click Rate is 66% higher** (1.69% vs 1.02%) - strongest signal
-2. **Click-to-Open Rate is 48% higher** (12% vs 8%) - once opened, more likely to click
-3. **Open Rate is 13% higher** (14.1% vs 12.5%) - modest lift
-4. **Order Rate is 14% higher** (1.01% vs 0.89%)
+1. **Revenue per User Sent is 336% higher** ($21.04 vs $4.83) - the true measure of ROI
+2. **Open Rate is 104% higher** (25.72% vs 12.61%) - personalized content drives engagement
+3. **Click Rate is 160% higher** (2.47% vs 0.95%) - strongest engagement signal
+4. **AOV is 154% higher** ($1,567 vs $617) - personalized users buy higher-value items
+5. **Order Rate is 72% higher** (1.34% vs 0.78%) - better conversion
 
-### Performance by Treatment ID
+### Performance by Personalized Fitment Treatment Variant
 
-| Treatment | Users Sent | % With Recs | Open Rate | Click Rate | CTR |
-|-----------|------------|-------------|-----------|------------|-----|
-| 17049625 | 23,598 | 33% | 5.6% | 0.65% | **11.7%** |
-| 16150707 | 18,940 | 40% | 5.5% | 0.46% | 8.4% |
-| 16490939 | 17,298 | 10% | **13.4%** | 1.01% | 7.5% |
-| 16444546 | 8,246 | 17% | 4.2% | 0.21% | 4.9% |
-| 17049596 | 2,875 | 18% | 2.4% | 0.1% | 4.4% |
-| 17049603 | 1,308 | 21% | 2.2% | 0.31% | 13.8% |
-| 16593503 | 910 | 100%+ | 2.3% | 0.66% | 28.6% |
-| 20142778 | 611 | 100%+ | 7.9% | 0.82% | 10.4% |
+| Treatment ID | Variant Name | Users Sent | Open Rate | Click Rate | CTR |
+|--------------|--------------|------------|-----------|------------|-----|
+| 20142778 | Warm Welcome | 613 | 7.83% | 0.82% | 10.42% |
+| 20142818 | Weekend Warrior | 581 | 7.75% | 0.52% | 6.67% |
+| 20142825 | Visionary | 574 | 9.06% | 0.70% | 7.69% |
+| 20142832 | Detail Oriented | 570 | 7.89% | 0.53% | 6.67% |
+| 20142846 | Look Back | 560 | 10.00% | 0.36% | 3.57% |
+| 20142839 | Expert Pick | 557 | 9.34% | 0.72% | 7.69% |
+| 20142785 | Relatable Wrencher | 549 | 9.11% | 0.55% | 6.00% |
+| 20142811 | Momentum | 545 | 7.89% | 0.37% | 4.65% |
+| 20142804 | Completer | 533 | 10.32% | 0.75% | 7.27% |
+| **16150700** | **Thanks** | **440** | **9.55%** | **1.36%** | **14.29%** |
+
+### Top Performer
+
+**"Thanks"** variant (16150700) has the highest click rate (1.36%) and CTR (14.29%) among all personalized fitment treatments.
 
 ### Recommendations
 
-- **Increase recommendation coverage** - only ~19% of sent users currently have personalized product recommendations
-- Treatment **16490939** has highest open rate (13.4%) but only 10% rec coverage - opportunity for improvement
-- Treatment **17049625** has best CTR (11.7%) with 33% rec coverage
+- **Scale Personalized Fitment**: Only 1,391 users (3.3%) received personalized fitment emails - significant opportunity to expand
+- **Replicate "Thanks" variant**: Best performing variant should inform future treatment design
+- **Increase vehicle fitment coverage**: More users with registered vehicles = more personalized recommendations
 
 ---
 
@@ -150,66 +163,152 @@ SELECT
 FROM sent s, opens o, clicks c;
 ```
 
-### Recommendations vs No Recommendations Query
+### Personalized Fitment vs Static Recommendations Query
 ```sql
-WITH user_emails AS (
-  SELECT DISTINCT
-    user_id,
-    LOWER((SELECT up.string_value FROM UNNEST(user_properties) up WHERE up.property_name = 'email' LIMIT 1)) as email
-  FROM `auxia-gcp.company_1950.ingestion_unified_attributes_schema_incremental`
+-- All 32 Live Treatments (see configs/personalized_treatments.csv and configs/static_treatments.csv)
+WITH personalized_ids AS (
+  SELECT treatment_id FROM UNNEST([
+    16150700, 20142778, 20142785, 20142804, 20142811,
+    20142818, 20142825, 20142832, 20142839, 20142846
+  ]) as treatment_id
 ),
-sent_with_rec_flag AS (
+static_ids AS (
+  SELECT treatment_id FROM UNNEST([
+    16490932, 16490939, 16518436, 16518443, 16564380, 16564387, 16564394, 16564401,
+    16564408, 16564415, 16564423, 16564431, 16564439, 16564447, 16564455, 16564463,
+    16593451, 16593459, 16593467, 16593475, 16593483, 16593491
+  ]) as treatment_id
+),
+all_live_ids AS (
+  SELECT treatment_id FROM personalized_ids
+  UNION ALL
+  SELECT treatment_id FROM static_ids
+),
+sent AS (
   SELECT
     th.user_id,
     th.treatment_id,
     th.treatment_sent_timestamp,
-    CASE WHEN r.email_lower IS NOT NULL THEN true ELSE false END as has_recommendation
-  FROM `auxia-gcp.company_1950.treatment_history` th
-  JOIN user_emails ue ON th.user_id = ue.user_id
-  LEFT JOIN `auxia-reporting.temp_holley_v5_4.final_vehicle_recommendations` r
-    ON ue.email = r.email_lower
+    CASE
+      WHEN th.treatment_id IN (SELECT treatment_id FROM personalized_ids) THEN 'Personalized Fitment (10)'
+      WHEN th.treatment_id IN (SELECT treatment_id FROM static_ids) THEN 'Static Recommendations (22)'
+    END as treatment_type
+  FROM `auxia-gcp.company_1950.treatment_history_sent` th
   WHERE th.treatment_sent_status = 'TREATMENT_SENT'
-    AND DATE(th.treatment_sent_timestamp) >= '2025-12-04'
+    AND th.treatment_id IN (SELECT treatment_id FROM all_live_ids)
 ),
 opens AS (
   SELECT DISTINCT user_id, treatment_id
   FROM `auxia-gcp.company_1950.treatment_interaction`
   WHERE interaction_type = 'VIEWED'
-    AND DATE(interaction_timestamp_micros) >= '2025-12-04'
 ),
 clicks AS (
   SELECT DISTINCT user_id, treatment_id
   FROM `auxia-gcp.company_1950.treatment_interaction`
   WHERE interaction_type = 'CLICKED'
-    AND DATE(interaction_timestamp_micros) >= '2025-12-04'
 ),
 orders AS (
-  SELECT user_id, MIN(client_event_timestamp) as order_time,
-    SUM(COALESCE((SELECT ep.double_value FROM UNNEST(event_properties) ep WHERE ep.property_name = 'Subtotal' LIMIT 1), 0)) as revenue
+  SELECT
+    user_id,
+    MIN(client_event_timestamp) as first_order_time,
+    SUM(COALESCE(
+      (SELECT ep.double_value FROM UNNEST(event_properties) ep WHERE ep.property_name = 'Subtotal' LIMIT 1),
+      0
+    )) as revenue
   FROM `auxia-gcp.company_1950.ingestion_unified_schema_incremental`
   WHERE event_name = 'Placed Order'
-    AND DATE(client_event_timestamp) >= '2025-12-04'
   GROUP BY 1
 )
 SELECT
-  CASE WHEN s.has_recommendation THEN 'With Recommendations' ELSE 'Without Recommendations' END as group_type,
+  s.treatment_type,
   COUNT(DISTINCT s.user_id) as users_sent,
   COUNT(DISTINCT o.user_id) as users_opened,
   ROUND(100.0 * COUNT(DISTINCT o.user_id) / COUNT(DISTINCT s.user_id), 2) as open_rate,
   COUNT(DISTINCT c.user_id) as users_clicked,
   ROUND(100.0 * COUNT(DISTINCT c.user_id) / COUNT(DISTINCT s.user_id), 2) as click_rate,
-  ROUND(100.0 * COUNT(DISTINCT c.user_id) / NULLIF(COUNT(DISTINCT o.user_id), 0), 2) as click_to_open_rate,
-  COUNT(DISTINCT CASE WHEN ord.order_time > s.treatment_sent_timestamp THEN s.user_id END) as users_ordered,
-  ROUND(100.0 * COUNT(DISTINCT CASE WHEN ord.order_time > s.treatment_sent_timestamp THEN s.user_id END) / COUNT(DISTINCT s.user_id), 2) as order_rate,
-  ROUND(SUM(CASE WHEN ord.order_time > s.treatment_sent_timestamp THEN ord.revenue ELSE 0 END), 2) as total_revenue
-FROM sent_with_rec_flag s
+  ROUND(100.0 * COUNT(DISTINCT c.user_id) / NULLIF(COUNT(DISTINCT o.user_id), 0), 2) as ctr,
+  COUNT(DISTINCT CASE WHEN ord.first_order_time > s.treatment_sent_timestamp THEN s.user_id END) as users_ordered,
+  ROUND(100.0 * COUNT(DISTINCT CASE WHEN ord.first_order_time > s.treatment_sent_timestamp THEN s.user_id END) / COUNT(DISTINCT s.user_id), 2) as order_rate,
+  ROUND(SUM(CASE WHEN ord.first_order_time > s.treatment_sent_timestamp THEN ord.revenue ELSE 0 END), 2) as total_revenue,
+  ROUND(SUM(CASE WHEN ord.first_order_time > s.treatment_sent_timestamp THEN ord.revenue ELSE 0 END) /
+    NULLIF(COUNT(DISTINCT CASE WHEN ord.first_order_time > s.treatment_sent_timestamp THEN s.user_id END), 0), 2) as aov
+FROM sent s
 LEFT JOIN opens o ON s.user_id = o.user_id AND s.treatment_id = o.treatment_id
 LEFT JOIN clicks c ON s.user_id = c.user_id AND s.treatment_id = c.treatment_id
 LEFT JOIN orders ord ON s.user_id = ord.user_id
 GROUP BY 1
-ORDER BY 1;
+ORDER BY 1 DESC;
 ```
 
 ---
 
+## 3. Open Issue: Uncategorized Treatments
+
+### Problem Discovered
+
+When analyzing the 32 "Live" treatments (10 personalized + 22 static), we found a **mismatch in user counts**:
+
+| Category | Users Sent (Dec 4+) |
+|----------|---------------------|
+| 10 Personalized Fitment treatments | 1,391 |
+| 22 Static treatments | 17,316 |
+| **Subtotal (32 Live)** | **18,707** |
+| **Total campaign sends** | **~77,000+** |
+| **Gap (uncategorized)** | **~59,000** |
+
+### Uncategorized Treatments (Top 10 by Volume)
+
+These treatment IDs are sending emails but are NOT in the 32 "Live" treatment list:
+
+| Treatment ID | Users Sent | Status Unknown |
+|--------------|------------|----------------|
+| 17049625 | 23,598 | ? |
+| 16150707 | 18,940 | ? |
+| 16444546 | 8,246 | ? |
+| 17049596 | 2,875 | ? |
+| 17049603 | 1,308 | ? |
+| 16593503 | 910 | ? |
+| 18056699 | 890 | ? |
+| 17049617 | 704 | ? |
+| 17049610 | 691 | ? |
+| 16593514 | 380 | ? |
+
+### Next Steps
+
+1. **Get treatment names** for the uncategorized IDs from Auxia console
+2. **Determine if these are**: older treatments turned off, different campaigns, or missing from the "Live" list
+3. **Re-run analysis** once all treatments are properly categorized
+
+### Data Sources
+
+- Treatment names are NOT stored in BigQuery - must be retrieved from Auxia console
+- `treatment_history` = all treatment records
+- `treatment_history_sent` = only sent treatments
+- Treatment IDs provided manually by user from Auxia console export
+
+---
+
+## How This Analysis Was Done
+
+### Context for Future Sessions
+
+1. **Goal**: Compare performance of Personalized Fitment recommendations (ours) vs Static recommendations
+
+2. **Key Discovery**: Treatment names are not in BigQuery. User must export treatment IDs/names from Auxia console.
+
+3. **Treatment ID Sources**:
+   - `configs/personalized_treatments.csv` - 10 Personalized Fitment treatment IDs
+   - `configs/static_treatments.csv` - 22 Static treatment IDs
+   - Both files created from manual Auxia console export
+
+4. **Tables Used**:
+   - `treatment_history_sent` - for send counts (NOT `treatment_history` which includes non-sent)
+   - `treatment_interaction` - for opens (VIEWED) and clicks (CLICKED)
+   - `ingestion_unified_schema_incremental` - for orders and revenue
+
+5. **Current Blocker**: 20 uncategorized treatments sending ~59K users - need names to properly categorize
+
+---
+
 *Report generated: Dec 10, 2025*
+*Last updated: Dec 10, 2025 - Added uncategorized treatments issue*

@@ -5,10 +5,10 @@
 -- Reviewed and approved by Claude Sonnet
 -- --------------------------------------------------------------------------------------------------
 -- 3-Step pipeline
---   1) Fitment/Eligibility: price >= $20, HTTPS image, refurb + service SKU filters, vehicle fitment,
---      generation min-parts check (>=4).
---   2) Scoring: LOG-scaled intent (90d) + hybrid popularity (324d, no overlap: import_orders < 2025-09-01,
---      unified_events >= 2025-09-01). Score ALL parts; user purchases still contribute to scores.
+--   1) Fitment/Eligibility: price >= $50, HTTPS image, refurb + service SKU filters, vehicle fitment,
+--      generation min-parts check (>=4), commodity PartType exclusions (gaskets, bolts, caps, etc.).
+--   2) Scoring: LOG-scaled intent (Sep 1 to today) + hybrid popularity (import_orders < Sep 1,
+--      unified_events >= Sep 1). Score ALL parts; user purchases still contribute to scores.
 --   3) Recommendation: purchase exclusion (365d hybrid window), variant dedup (base_sku), diversity cap,
 --      top 4 per user.
 -- --------------------------------------------------------------------------------------------------
@@ -21,20 +21,21 @@
 DECLARE target_project STRING DEFAULT 'auxia-reporting';
 DECLARE target_dataset STRING DEFAULT 'temp_holley_v5_4';
 
-DECLARE intent_window_days INT64 DEFAULT 93;
+-- Intent window: Fixed Sep 1 boundary to current date
 DECLARE intent_window_end   DATE DEFAULT CURRENT_DATE();
-DECLARE intent_window_start DATE DEFAULT DATE_SUB(intent_window_end, INTERVAL intent_window_days DAY);
+DECLARE intent_window_start DATE DEFAULT DATE '2025-09-01';  -- Fixed boundary
 
-DECLARE pop_hist_days   INT64 DEFAULT 234; -- historical slice length (paired with 93d recent = 327d total)
-DECLARE pop_recent_days INT64 DEFAULT 93;  -- aligns with intent window
-DECLARE pop_recent_end   DATE DEFAULT intent_window_end;
+-- Historical popularity: Everything before Sep 1 (import_orders)
+DECLARE pop_hist_end     DATE DEFAULT DATE '2025-08-31';     -- Day before Sep 1
+DECLARE pop_hist_start   DATE DEFAULT DATE '2025-01-10';     -- ~234 days before Aug 31
+
+-- Recent popularity: Aligns with intent (Sep 1 to today, unified_events)
 DECLARE pop_recent_start DATE DEFAULT intent_window_start;
-DECLARE pop_hist_end     DATE DEFAULT DATE_SUB(pop_recent_start, INTERVAL 1 DAY);
-DECLARE pop_hist_start   DATE DEFAULT DATE_SUB(pop_hist_end, INTERVAL pop_hist_days DAY);
+DECLARE pop_recent_end   DATE DEFAULT intent_window_end;
 
 DECLARE purchase_window_days INT64 DEFAULT 365;              -- suppression window
 DECLARE allow_price_fallback BOOL DEFAULT TRUE;              -- allow @min_price fallback when price missing
-DECLARE min_price FLOAT64 DEFAULT 20.0;
+DECLARE min_price FLOAT64 DEFAULT 50.0;
 DECLARE max_parttype_per_user INT64 DEFAULT 2;
 DECLARE required_recs INT64 DEFAULT 4;
 
@@ -265,6 +266,24 @@ fitment_filtered AS (
     AND (price.price IS NOT NULL OR @allow_price_fallback)
     AND img.image_url IS NOT NULL
     AND img.image_url LIKE 'https://%%'
+    -- Exclude commodity part types (gaskets, bolts, caps, etc.)
+    AND NOT (
+      -- Safe exclusions (all low-value)
+      f.part_type LIKE '%%Gasket%%'
+      OR f.part_type LIKE '%%Decal%%'
+      OR f.part_type LIKE '%%Key%%'
+      OR f.part_type LIKE '%%Washer%%'
+      OR f.part_type LIKE '%%Clamp%%'
+      -- Bolt exclusions (except high-value engine bolts)
+      OR (f.part_type LIKE '%%Bolt%%'
+          AND f.part_type NOT IN ('Engine Cylinder Head Bolt', 'Engine Bolt Kit'))
+      -- Cap exclusions (except high-value distributor/wheel caps)
+      OR (f.part_type LIKE '%%Cap%%'
+          AND f.part_type NOT LIKE '%%Distributor Cap%%'
+          AND f.part_type NOT IN ('Wheel Hub Cap', 'Wheel Cap Set'))
+    )
+    -- Exclude UNKNOWN parts under $3000 (commodity noise)
+    AND NOT (f.part_type = 'UNKNOWN' AND COALESCE(price.price, @min_price) < 3000)
 ),
 per_generation AS (
   SELECT year, make, model, COUNT(*) AS part_count
@@ -469,7 +488,7 @@ CREATE OR REPLACE TABLE %s
 CLUSTER BY user_id AS
 WITH normalized AS (
   SELECT s.*,
-         REGEXP_REPLACE(s.sku, r'(-KIT|-BLK|-POL|-CHR|-RAW|-[A-Z0-9]{2})$', '') AS base_sku
+         REGEXP_REPLACE(s.sku, r'(-KIT|-BLK|-POL|-CHR|-RAW|-[A-Z0-9]{1,2}|[BRGP])$', '') AS base_sku
   FROM %s s
 ),
 dedup_variant AS (
