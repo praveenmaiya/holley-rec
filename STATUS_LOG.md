@@ -5,267 +5,24 @@
 
 ---
 
-## Current State (Dec 11, 2025)
+## 2025-12-11 (Thursday)
 
-| Item | Value |
-|------|-------|
-| Version | v5.6.2 |
-| Users | 456,119 |
-| Min Price | $50 |
-| Avg Price | $465.87 |
-| Revenue/User | $1,863.48 |
-| Last Commit | `5913c82` |
+### Focus: Recommendation Pipeline Updates (Quality Improvements)
 
-**Recent Changes:**
-- Commodity filter (gaskets, bolts, decals excluded)
-- Variant dedup fix (RA003B/R/G deduplicated)
-- Intent window fixed to Sep 1, 2025
+Improved recommendation quality and revenue potential by tightening candidate filtering and deduping product variants.
 
-**Backups:** `_2025_12_11_v3` (current), `_v2` (variant fix), `_v1` (pre-fix)
+**Updates:**
+- Raised minimum price floor from **$20 → $50** to avoid low-value items dominating recommendations.
+- Filtered out low-value PartTypes (gaskets, bolt sets, decals, clamps, etc.), while keeping high-value exceptions (engine bolt kits and distributor caps).
+- Fixed color variant duplicates so we don’t recommend the same product in multiple colors (e.g., `RA003B` and `RA003R`).
+
+**Results:**
+- Avg recommended item price: **$283 → $466** (**+65%**).
+- Recommendation mix shifted toward higher-value items (e.g., fuel injection kits & carburetors) instead of commodity bolt-set style parts.
 
 ---
 
-## 2025-12-11 (Wednesday)
-
-### Focus: Pipeline Refresh, Variant Dedup Fix & Commodity Filter
-
-Re-ran recommendation pipeline with fresh data, fixed variant deduplication bug, and added commodity parts filter.
-
----
-
-#### 1. Pipeline Refresh
-
-**Changes to SQL** (`sql/recommendations/v5_6_vehicle_fitment_recommendations.sql`):
-
-| Parameter | Before | After |
-|-----------|--------|-------|
-| `intent_window_start` | Rolling 93 days | Fixed `2025-09-01` |
-| `intent_window_end` | `CURRENT_DATE()` | `CURRENT_DATE()` |
-| `pop_hist_end` | Derived | Fixed `2025-08-31` |
-
-**Rationale**: Sep 1 is the boundary between historical (`import_orders`) and recent (`unified_events`) data. Keep it fixed, not rolling.
-
-**Pipeline Run Results**:
-| Metric | Dec 2 Run | Dec 11 Run |
-|--------|-----------|------------|
-| Users | 458,859 | 459,540 |
-| Runtime | 336s | 257s |
-| Intent Window | Sep 10 - Dec 2 | Sep 1 - Dec 11 |
-
----
-
-#### 2. Variant Dedup Bug Fix
-
-**Problem**: Color variants like `RA003B` (Blue) and `RA003R` (Red) were both appearing in same user's recommendations.
-
-**Root Cause**: Regex only matched 2-character suffixes, not single-character:
-```sql
--- Before (missed single-char suffixes)
-REGEXP_REPLACE(sku, r'(-KIT|-BLK|-POL|-CHR|-RAW|-[A-Z0-9]{2})$', '')
-
--- After (catches B, R, G, P suffixes)
-REGEXP_REPLACE(sku, r'(-KIT|-BLK|-POL|-CHR|-RAW|-[A-Z0-9]{1,2}|[BRGP])$', '')
-```
-
-**Impact**:
-| Metric | Before Fix | After Fix |
-|--------|------------|-----------|
-| Users with RA003B + RA003R | 30,911 | 0 |
-| New variant groups identified | - | 2,490 |
-| SKUs newly grouped | - | 2,845 |
-
-**Example Fix** (andrew@auxia.io - 2023 Chevrolet Camaro):
-| Position | Before | After |
-|----------|--------|-------|
-| 1 | RA003B | RA003B |
-| 2 | RA003R ❌ | DS-MFD ✅ |
-| 3 | DS-MFD | FRRA003X |
-| 4 | S1000 | S1000 |
-
----
-
-#### 3. QA Validation
-
-**Refurbished Items Check**:
-- QA reported seeing "inTune 3 Platinum - Refurbished" for user `01K9R0PFS7Z1A7BW37D70MX3R2`
-- **Finding**: User has no vehicle info → receiving **static treatment**, not personalized fitment
-- Refurbished items in our pipeline: **0** ✅
-
-**Validation Results (Dec 11 v2)**:
-| Check | Result |
-|-------|--------|
-| Users | 458,826 ✅ |
-| Duplicates | 0 ✅ |
-| Min Price | $20.00 ✅ |
-| Max Price | $5,165.95 |
-| Avg Price | $282.69 |
-
----
-
-#### 4. Stability Analysis (vs Dec 2 Run)
-
-| Metric | Count | % |
-|--------|-------|---|
-| Users in both runs | 458,788 | - |
-| Exactly same recs | 393,462 | 85.76% |
-| Same SKUs, diff order | 21,444 | 4.67% |
-| Different SKUs | 43,882 | 9.56% |
-
-Position-level stability:
-| Position | Unchanged |
-|----------|-----------|
-| 1 | 98.18% |
-| 2 | 96.75% |
-| 3 | 94.70% |
-| 4 | 88.58% |
-
----
-
-#### 5. Tables Updated
-
-| Table | Status |
-|-------|--------|
-| `company_1950_jp.final_vehicle_recommendations` | ✅ Production (v3 commodity filter) |
-| `company_1950_jp.final_vehicle_recommendations_2025_12_11_v3` | Backup (commodity filter) |
-| `company_1950_jp.final_vehicle_recommendations_2025_12_11_v2` | Backup (variant fix) |
-| `company_1950_jp.final_vehicle_recommendations_2025_12_11` | Backup (pre-fix) |
-
----
-
-#### 6. Files Modified
-
-| File | Change |
-|------|--------|
-| `sql/recommendations/v5_6_vehicle_fitment_recommendations.sql` | Fixed intent window to Sep 1, updated variant regex |
-| `specs/v5_6_recommendations.md` | Updated to v5.6.1, added variant dedup details |
-| `docs/pipeline_run_stats.md` | **New** - Pipeline run history & comparison stats |
-| `AGENTS.md` | Added new rules and file reference |
-| `STATUS_LOG.md` | This entry |
-
----
-
-#### 7. Commodity Parts Filter (v5.6.2)
-
-**Problem**: Low-value commodity parts (e.g., "Mr. Gasket Oil Pan Bolt Set - 60850G") were appearing in recommendations - not compelling for email marketing.
-
-**Solution**: Added PartType keyword exclusions with whitelist for high-value items:
-
-**Changes to SQL** (`sql/recommendations/v5_6_vehicle_fitment_recommendations.sql`):
-
-| Change | Before | After |
-|--------|--------|-------|
-| `min_price` | $20.00 | $50.00 |
-| PartType filters | None | Gasket, Decal, Key, Washer, Clamp, Bolt*, Cap* |
-| UNKNOWN parts | All included | Only $3,000+ |
-
-*Whitelisted: Engine Cylinder Head Bolt, Engine Bolt Kit, Distributor Cap Kits, Wheel Hub Cap
-
-**Pipeline Run Results (v3)**:
-| Metric | v2 (before) | v3 (after) | Change |
-|--------|-------------|------------|--------|
-| Users | 458,826 | 456,119 | -2,707 |
-| Avg Price | $282.69 | $465.87 | +65% |
-| Min Price | $20.00 | $50.57 | +$30 |
-| Revenue/User | $1,130.78 | $1,863.48 | **+65%** |
-
-**Revenue Potential (at 1% conversion)**:
-| Version | Potential Revenue |
-|---------|-------------------|
-| v2 | $5.2M |
-| v3 | $8.5M |
-| **Lift** | **+$3.3M (+64%)** |
-
-**Commodity Validation**:
-- Gaskets in output: 0 ✅
-- Bolts in output: 0 ✅
-- Decals in output: 0 ✅
-
----
-
-### Day Summary
-
-| Task | Status |
-|------|--------|
-| Pipeline refresh (Sep 1 - Dec 11) | ✅ Complete |
-| Variant dedup fix | ✅ Complete |
-| Commodity filter | ✅ Complete |
-| Copy to production | ✅ Complete |
-| QA refurbished validation | ✅ Confirmed clean |
-| Stability analysis | ✅ 86% unchanged |
-
----
-
-## 2025-12-10 (Tuesday)
-
-### Focus: Personalized Fitment vs Static Recommendations Analysis
-
-Analyzed post-purchase email performance comparing our 10 Personalized Fitment treatments against 22 Static treatments.
-
----
-
-#### 1. Treatment ID Discovery
-
-**Problem**: Treatment names are NOT stored in BigQuery. Needed to map treatment IDs to names.
-
-**Solution**: User exported treatment lists from Auxia console. Created config files:
-- `configs/personalized_treatments.csv` - 10 Personalized Fitment treatment IDs
-- `configs/static_treatments.csv` - 22 Static treatment IDs
-
-**Key Learning**: Use `treatment_history_sent` (not `treatment_history`) for actual sends.
-
----
-
-#### 2. Performance Comparison (32 Live Treatments)
-
-| Metric | Personalized Fitment (10) | Static (22) | Lift |
-|--------|--------------------------|-------------|------|
-| Users Sent | 1,391 | 17,316 | - |
-| Open Rate | 25.72% | 12.61% | **+104%** |
-| Click Rate | 2.47% | 0.95% | **+160%** |
-| Order Rate | 1.34% | 0.78% | **+72%** |
-| AOV | $1,567 | $617 | **+154%** |
-| **Revenue/User Sent** | **$21.04** | **$4.83** | **+336%** |
-
-**Outcome**: Personalized Fitment generates 4.4x more revenue per user than Static.
-
----
-
-#### 3. Open Issue: Uncategorized Treatments
-
-**Problem**: 32 "Live" treatments only account for ~19K users, but total campaign sends ~77K+.
-
-**Finding**: 20 additional treatment IDs are sending ~59K users but are NOT in the "Live" list:
-- 17049625: 23,598 users
-- 16150707: 18,940 users
-- 16444546: 8,246 users
-- (+ 17 more)
-
-**Next Step**: Get treatment names for these IDs from Auxia console to properly categorize.
-
----
-
-#### 4. Files Created/Updated
-
-| File | Purpose |
-|------|---------|
-| `docs/campaign_reports_2025_12_10.md` | Updated report with correct comparison |
-| `configs/personalized_treatments.csv` | 10 Personalized Fitment treatment IDs |
-| `configs/static_treatments.csv` | 22 Static treatment IDs |
-
----
-
-### Day Summary
-
-| Category | Status |
-|----------|--------|
-| Personalized vs Static comparison | Complete (32 Live treatments) |
-| Revenue lift | +336% per user sent |
-| Uncategorized treatments | 20 IDs need names from Auxia console |
-| Blocker | Cannot finalize analysis until all treatments categorized |
-
----
-
-## 2025-12-09 (Monday)
+## 2025-12-09 (Tuesday)
 
 ### Focus: Email Treatment Click Bandit - Implementation Complete
 
@@ -297,7 +54,7 @@ Built Thompson Sampling bandit analysis for email treatment optimization. Adapte
 
 ---
 
-## 2025-12-06 (Friday)
+## 2025-12-06 (Saturday)
 
 ### Focus: Post-Launch Campaign Performance Analysis
 
@@ -413,7 +170,7 @@ Email campaign launched Dec 4th. Analyzed interactions data and built reporting 
 
 ---
 
-## 2025-12-05 (Thursday)
+## 2025-12-05 (Friday)
 
 ### Focus: Documentation Consolidation & Project Migration
 
