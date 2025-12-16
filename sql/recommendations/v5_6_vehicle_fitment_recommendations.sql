@@ -18,8 +18,17 @@
 -- Tuning knobs are declared below; adjust target_dataset for sandbox vs production.
 -- ==================================================================================================
 
+-- Working dataset (intermediate tables)
 DECLARE target_project STRING DEFAULT 'auxia-reporting';
 DECLARE target_dataset STRING DEFAULT 'temp_holley_v5_4';
+
+-- Production dataset (final deployment)
+DECLARE prod_project STRING DEFAULT 'auxia-reporting';
+DECLARE prod_dataset STRING DEFAULT 'company_1950_jp';
+DECLARE prod_table_name STRING DEFAULT 'final_vehicle_recommendations';
+
+-- Backup suffix (current date)
+DECLARE backup_suffix STRING DEFAULT FORMAT_DATE('%Y_%m_%d', CURRENT_DATE());
 
 -- Intent window: Fixed Sep 1 boundary to current date
 DECLARE intent_window_end   DATE DEFAULT CURRENT_DATE();
@@ -602,3 +611,42 @@ EXECUTE IMMEDIATE FORMAT("DROP TABLE IF EXISTS %s", tbl_staged_events);
 -- Pipeline complete
 SELECT FORMAT('[COMPLETE] Total pipeline time: %d seconds',
   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), pipeline_start, SECOND)) AS log;
+
+-- ====================================================================================
+-- STEP 4: PRODUCTION DEPLOYMENT
+--  - Overwrite production table
+--  - Create timestamped copy
+-- ====================================================================================
+SET step_start = CURRENT_TIMESTAMP();
+
+-- 4.1 Deploy to production (overwrite)
+EXECUTE IMMEDIATE FORMAT("""
+CREATE OR REPLACE TABLE `%s.%s.%s`
+COPY `%s.%s.final_vehicle_recommendations`
+""", prod_project, prod_dataset, prod_table_name,
+     target_project, target_dataset);
+
+SELECT FORMAT('[Step 4.1] Deployed to production: %s.%s.%s',
+  prod_project, prod_dataset, prod_table_name) AS log;
+
+-- 4.2 Create timestamped copy
+EXECUTE IMMEDIATE FORMAT("""
+CREATE OR REPLACE TABLE `%s.%s.%s_%s`
+COPY `%s.%s.%s`
+""", prod_project, prod_dataset, prod_table_name, backup_suffix,
+     prod_project, prod_dataset, prod_table_name);
+
+SET step_end = CURRENT_TIMESTAMP();
+SELECT FORMAT('[Step 4.2] Timestamped copy: %s.%s.%s_%s (%d seconds)',
+  prod_project, prod_dataset, prod_table_name, backup_suffix,
+  TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
+
+-- Final verification
+EXECUTE IMMEDIATE FORMAT("""
+SELECT 'production_deployed' AS status,
+  COUNT(*) AS user_count,
+  MIN(generated_at) AS generated_at
+FROM `%s.%s.%s`
+""", prod_project, prod_dataset, prod_table_name);
+
+SELECT '[DEPLOYMENT COMPLETE] Pipeline finished successfully' AS log;
