@@ -39,6 +39,7 @@ Vehicle fitment recommendations for automotive parts using collaborative filteri
 | `docs/campaign_reports_2025_12_10.md` | Post-purchase email campaign analysis |
 | `docs/pipeline_run_stats.md` | Pipeline run history & comparison stats |
 | `src/bandit_click_holley.py` | Email treatment Click Bandit analysis |
+| `agent_docs/postgres_treatments.md` | PostgreSQL treatment DB queries & schema |
 | `flows/metaflow_runner.py` | K8s script runner via Metaflow |
 | `flows/run.sh` | Run scripts on K8s |
 | `flows/README.md` | Metaflow setup instructions |
@@ -57,6 +58,9 @@ bq query --use_legacy_sql=false < sql/validation/qa_checks.sql
 # Run Python script on K8s (via Metaflow)
 ./flows/run.sh src/bandit_click_holley.py
 
+# Query PostgreSQL treatments (via BigQuery federated query)
+bq query --use_legacy_sql=false 'SELECT * FROM EXTERNAL_QUERY("projects/auxia-gcp/locations/asia-northeast1/connections/jp-psql_hbProdDb", "SELECT treatment_id, name, is_paused FROM treatment WHERE company_id = 1950 ORDER BY treatment_id DESC LIMIT 20")'
+
 # Python
 make test && make lint
 ```
@@ -72,3 +76,4 @@ make test && make lint
 ## Docs (read before coding)
 - `@agent_docs/architecture.md` - Pipeline, scoring formula
 - `@agent_docs/bigquery.md` - Event bugs, SQL patterns
+- `@agent_docs/postgres_treatments.md` - Treatment DB schema, query patterns
