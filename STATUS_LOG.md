@@ -5,6 +5,41 @@
 
 ---
 
+## 2025-12-16 (Monday)
+
+### Focus: Daily Run Setup & Production Deployment
+
+Added production deployment step to SQL pipeline for daily scheduled runs.
+
+**Updates:**
+- Added Step 4 to pipeline: deploy to production + create timestamped copy
+- No hardcoded dates (uses `CURRENT_DATE()`)
+- Single script does: build → deploy → timestamp copy
+
+**Pipeline Flow:**
+1. Build intermediate tables in `temp_holley_v5_4`
+2. Create `final_vehicle_recommendations` in v5_4
+3. Overwrite production table
+4. Create timestamped copy (e.g., `_2025_12_16`)
+
+**Run Results (Dec 16):**
+
+| Metric | Dec 11 | Dec 16 | Change |
+|--------|--------|--------|--------|
+| Users | 459,540 | 456,574 | -0.6% |
+| Avg rec1 price | $240.93 | $336.53 | +40% |
+| Avg all prices | $282.25 | $389.83 | +38% |
+
+**Validation:** All checks passed (user count, min price $50, no duplicates, HTTPS images).
+
+**Stability:** 35.5% identical, 51.8% with 3-4 changes (higher churn due to 5 days of new data).
+
+**Commit:** `9fe99b8` - Add production deployment step to recommendation pipeline
+
+**Next:** Set up BigQuery scheduled query (pending service account access).
+
+---
+
 ## 2025-12-11 (Thursday)
 
 ### Focus: Recommendation Pipeline Updates (Quality Improvements)
