@@ -7,9 +7,11 @@
 
 ## 2025-12-17 (Tuesday)
 
-### Focus: Unbiased CTR Analysis & Table Reference Fixes
+### Focus: Unbiased CTR Analysis & Bandit Model Investigation
 
-Corrected CTR analysis with proper BigQuery tables and documented key finding: "Static" = only Apparel emails.
+#### 1. Unbiased CTR Analysis (Personalized vs Static)
+
+Corrected CTR analysis with proper BigQuery tables. Key finding: "Static" = only Apparel emails.
 
 **Key Results (Eligible Users):**
 | Treatment | Sends | Clicks | CTR |
@@ -17,16 +19,31 @@ Corrected CTR analysis with proper BigQuery tables and documented key finding: "
 | Personalized | 9,385 | 61 | 4.81% |
 | Static | 1,824 | 39 | 11.89% |
 
-**Within-User (428 users got both):** Static 9.23% vs Personalized 5.12%
+**Within-User (428 users):** Static 9.23% vs Personalized 5.12%
 
-**Critical Finding:** Only 1 of 22 static treatments sent (Apparel & Collectibles). Other 21 have 0 sends.
+**Critical:** Only 1 of 22 static treatments sent (Apparel). Other 21 have 0 sends.
+
+#### 2. Bandit vs Random Model CTR Comparison (Dec 16 - First Day)
+
+**Traffic Split:** Random 91.5% (24,550) | Bandit 8.5% (2,289)
+
+| Metric | Random | Bandit |
+|--------|--------|--------|
+| Open Rate | **2.22%** | 1.09% |
+| CTR/Open | 8.42% | **12.0%** |
+| CTR/Send | **0.19%** | 0.13% |
+
+**Root Cause of Lower Bandit Opens:** Thompson Sampling exploration. Bandit deliberately tests low-score user-treatment pairs (avg score 0.08-0.16 vs Random 0.48-0.91 for same treatments).
+
+**Why Higher CTR/Open:** Users who open despite low predicted scores are self-selected high-intent → click more.
+
+**Verdict:** Too early (only 3 Bandit clicks). Bandit working as designed - exploring to learn.
 
 **Doc Updates:**
-- Fixed table references: `ingestion_unified_*` (not `imported_unified_*`)
-- Added complete table list to AGENTS.md, bigquery.md
-- Updated CTR analysis report with corrected numbers
+- Fixed table refs: `ingestion_unified_*` (not `imported_unified_*`)
+- Added `docs/model_ctr_comparison_2025_12_17.md` with deep dive analysis
 
-**Commits:** `5c607ed`, `c409fe5`
+**Commits:** `5c607ed`, `c409fe5`, `67891f7`
 
 ---
 
