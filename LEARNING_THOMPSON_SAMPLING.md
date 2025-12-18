@@ -4,6 +4,111 @@
 
 ---
 
+## Glossary: Key Concepts for Beginners
+
+### Email Funnel
+
+```
+Send → Impression → Open (View) → Click → Conversion
+  │         │           │           │          │
+  │         │           │           │          └── User purchases/completes goal
+  │         │           │           └── User clicks a link in the email
+  │         │           └── User opens/views the email
+  │         └── Email lands in inbox (delivered)
+  └── System sends the email
+```
+
+### Core Metrics
+
+| Term | What it means | Formula |
+|------|---------------|---------|
+| **Send** | Email dispatched to user | Count of emails sent |
+| **Impression** | Email delivered to inbox | Count of emails that reached inbox |
+| **Open / View** | User opened the email (tracked via invisible pixel) | Count of opens |
+| **Click** | User clicked a link inside the email | Count of clicks |
+| **Open Rate** | % of sent emails that were opened | `Opens / Sends × 100` |
+| **CTR (Click-Through Rate)** | % that clicked | Depends on denominator (see below) |
+
+### CTR: Three Ways to Calculate
+
+**CTR can mean different things depending on denominator:**
+
+| Metric | Formula | What it measures |
+|--------|---------|------------------|
+| **CTR/Send** | `Clicks / Sends × 100` | Overall effectiveness (business impact) |
+| **CTR/Open** | `Clicks / Opens × 100` | Content quality (once user opens) |
+| **CTR/Impression** | `Clicks / Impressions × 100` | Engagement among delivered |
+
+**Example:**
+```
+1000 emails sent → 100 opens → 10 clicks
+
+CTR/Send  = 10/1000 = 1.0%    ← "1% of all recipients clicked"
+CTR/Open  = 10/100  = 10.0%   ← "10% of openers clicked"
+```
+
+**Which to use?**
+- **CTR/Send**: Best for business decisions (includes deliverability + open + click)
+- **CTR/Open**: Best for content optimization (isolates email content quality)
+
+### Engagement
+
+**Engagement** = any user interaction with the email:
+
+| Engagement Type | Description | Tracked As |
+|-----------------|-------------|------------|
+| **VIEWED** | User opened the email | Open |
+| **CLICKED** | User clicked a link | Click |
+
+Higher engagement → user found the email relevant/valuable.
+
+### Treatment & Arms
+
+| Term | Definition |
+|------|------------|
+| **Treatment** | A specific email variant (subject line, content, recommendations) |
+| **Arm** | Same as treatment - terminology from "multi-armed bandit" problem |
+| **Control** | Baseline treatment for comparison (often no email or generic email) |
+| **Variant** | Alternative treatment being tested |
+
+**Why "Arm"?** Comes from slot machines ("one-armed bandits"). Each treatment is like pulling a different slot machine arm - you're trying to find which one pays out best.
+
+### Multi-Armed Bandit
+
+**The Problem**: You have N slot machines (arms/treatments). Each has unknown payout probability. How do you maximize total reward?
+
+```
+Arm A: ??? payout     Arm B: ??? payout     Arm C: ??? payout
+   │                     │                     │
+   └─────────────────────┼─────────────────────┘
+                         │
+              Which arm do you pull?
+```
+
+**The Dilemma**:
+- **Exploit**: Keep pulling the arm that's worked best so far
+- **Explore**: Try other arms to see if they're actually better
+
+### Thompson Sampling
+
+A **Bayesian approach** to the multi-armed bandit problem:
+
+1. Maintain a probability distribution for each arm's success rate
+2. Sample from each distribution
+3. Pick the arm with highest sampled value
+4. Update distribution based on outcome
+
+**Key behavior**: Naturally balances exploration/exploitation. Arms with uncertain outcomes get explored; arms with known good outcomes get exploited.
+
+### Model Types in Our System
+
+| Model | model_id | Behavior |
+|-------|----------|----------|
+| **Random** | 1 | Selects treatments across full score range |
+| **Bandit (Click)** | 195001001 | Thompson Sampling optimizing for clicks |
+
+---
+
 ## The Problem: Exploration vs Exploitation
 
 When sending emails, we have two competing goals:
