@@ -23,27 +23,30 @@ Corrected CTR analysis with proper BigQuery tables. Key finding: "Static" = only
 
 **Critical:** Only 1 of 22 static treatments sent (Apparel). Other 21 have 0 sends.
 
-#### 2. Bandit vs Random Model CTR Comparison (Dec 16 - First Day)
+#### 2. Bandit vs Random Model CTR Comparison (Dec 16 - Updated)
 
-**Traffic Split:** Random 91.5% (24,550) | Bandit 8.5% (2,289)
+**Traffic Split:** Random 91.5% (24,722) | Bandit 8.5% (2,301)
 
 | Metric | Random | Bandit |
 |--------|--------|--------|
-| Open Rate | **2.22%** | 1.09% |
-| CTR/Open | 8.42% | **12.0%** |
-| CTR/Send | **0.19%** | 0.13% |
+| Open Rate | **2.67%** | 1.26% |
+| CTR/Open | 9.38% | **31.03%** |
+| CTR/Send | 0.25% | **0.39%** |
+
+**Key Update:** Bandit now **wins on CTR/Send** (0.39% vs 0.25%) - the business metric that matters!
 
 **Root Cause of Lower Bandit Opens:** Thompson Sampling exploration. Bandit deliberately tests low-score user-treatment pairs (avg score 0.08-0.16 vs Random 0.48-0.91 for same treatments).
 
-**Why Higher CTR/Open:** Users who open despite low predicted scores are self-selected high-intent → click more.
+**Why Higher CTR/Open:** Users who open despite low predicted scores are self-selected high-intent → click more (31% vs 9.4%).
 
-**Verdict:** Too early (only 3 Bandit clicks). Bandit working as designed - exploring to learn.
+**Verdict:** Promising early results (9 Bandit clicks vs 62 Random). Bandit's superior CTR/Open compensates for lower open rate.
 
 **Doc Updates:**
 - Fixed table refs: `ingestion_unified_*` (not `imported_unified_*`)
 - Added `docs/model_ctr_comparison_2025_12_17.md` with deep dive analysis
+- Added `LEARNING_THOMPSON_SAMPLING.md` - educational reference with glossary
 
-**Commits:** `5c607ed`, `c409fe5`, `67891f7`
+**Commits:** `5c607ed`, `c409fe5`, `67891f7`, `76fef58`, `5f6fec7`, `d3468e6`
 
 ---
 
