@@ -66,6 +66,26 @@ bq query --use_legacy_sql=false 'SELECT * FROM EXTERNAL_QUERY("projects/auxia-gc
 make test && make lint
 ```
 
+## BigQuery Tables
+
+### auxia-gcp.company_1950
+
+| Table | Purpose |
+|-------|---------|
+| `ingestion_unified_attributes_schema_incremental` | User attributes (v1 YMM, email) |
+| `ingestion_unified_schema_incremental` | User events (views, carts, orders) |
+| `treatment_history_sent` | Treatment assignments |
+| `treatment_interaction` | Treatment interactions (VIEWED, CLICKED) |
+
+### auxia-gcp.data_company_1950
+
+| Table | Purpose |
+|-------|---------|
+| `vehicle_product_fitment_data` | Vehicle-to-SKU fitment mapping |
+| `import_items` | Product catalog (PartType for diversity) |
+| `import_items_tags` | Tags column (Refurbished filter) |
+| `import_orders` | Historical orders (popularity, purchase exclusion) |
+
 ## Critical Rules
 - Never hardcode project IDs (use configs/)
 - Always COALESCE(string_value, long_value) for event properties

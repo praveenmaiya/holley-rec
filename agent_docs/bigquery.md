@@ -140,10 +140,29 @@ bq query --use_legacy_sql=false \
 bq query --use_legacy_sql=false < sql/validation/qa_checks.sql
 ```
 
-## Datasets
+## Datasets & Tables
 
 | Dataset | Project | Purpose |
 |---------|---------|---------|
-| `company_1950` | auxia-gcp | User attributes, events |
+| `company_1950` | auxia-gcp | User attributes, events, treatment data |
 | `data_company_1950` | auxia-gcp | Catalog, fitment, orders |
 | `temp_holley_v5_4` | auxia-reporting | Output tables |
+| `company_1950_jp` | auxia-reporting | Production recommendation tables |
+
+### auxia-gcp.company_1950
+
+| Table | Purpose |
+|-------|---------|
+| `ingestion_unified_attributes_schema_incremental` | User attributes (v1 YMM, email) |
+| `ingestion_unified_schema_incremental` | User events (views, carts, orders) |
+| `treatment_history_sent` | Treatment assignments (user_id, treatment_id, model_id, score) |
+| `treatment_interaction` | Treatment interactions (VIEWED, CLICKED) |
+
+### auxia-gcp.data_company_1950
+
+| Table | Purpose |
+|-------|---------|
+| `vehicle_product_fitment_data` | Vehicle-to-SKU fitment mapping |
+| `import_items` | Product catalog (PartType for diversity) |
+| `import_items_tags` | Tags column (Refurbished filter) |
+| `import_orders` | Historical orders (popularity, purchase exclusion) |

@@ -48,7 +48,7 @@ True Treatment Effect: Δ = y - z
 ### BigQuery Tables
 - `auxia-gcp.company_1950.treatment_history_sent` - Treatment assignments
 - `auxia-gcp.company_1950.treatment_interaction` - Opens, clicks
-- `auxia-gcp.company_1950.imported_unified_attributes` - User vehicle data
+- `auxia-gcp.company_1950.ingestion_unified_attributes_schema_incremental` - User vehicle data (v1 YMM)
 
 ### PostgreSQL Tables (via EXTERNAL_QUERY)
 - `treatment` - Treatment definitions, boost_factor
