@@ -28,12 +28,12 @@ Comparing CTR between two models:
 ### 1. Open Rate
 - **Random wins**: 2.22% vs 1.09%
 - Bandit has ~50% lower open rate
-- Possible cause: Bandit may be selecting treatments with less appealing subject lines
+- **Root cause**: Thompson Sampling exploration - Bandit deliberately tests low-score user-treatment pairs (see Deep Dive below)
 
 ### 2. CTR per Open
 - **Bandit wins**: 12.0% vs 8.42%
 - When users open, Bandit emails get +43% more clicks
-- Suggests Bandit is selecting treatments with better content/recommendations
+- **Explanation**: Users who open despite low predicted scores are self-selected high-intent users (see Deep Dive below)
 
 ### 3. CTR per Send
 - **Random wins**: 0.19% vs 0.13%
@@ -64,8 +64,71 @@ The higher CTR/Open (12% vs 8.4%) is promising but not statistically significant
 ## Recommendations
 
 1. **Wait for more data** - at least 50+ clicks per model before drawing conclusions
-2. **Investigate open rate gap** - why is Bandit getting 50% fewer opens?
-3. **Check treatment selection** - what treatments is Bandit favoring vs Random?
+2. **Investigate open rate gap** - why is Bandit getting 50% fewer opens? ✅ Answered below
+3. **Check treatment selection** - what treatments is Bandit favoring vs Random? ✅ Answered below
+
+---
+
+## Deep Dive: Why Bandit Has Lower Open Rate But Higher CTR/Open
+
+### User Selection: Not the Cause
+
+Bandit users actually have **higher historical engagement**:
+
+| Model | Unique Users | Avg Hist Opens | Agg Hist Open Rate | % New Users |
+|-------|--------------|----------------|--------------------| ------------|
+| Bandit | 2,289 | 0.9 | 18.04% | 2.3% |
+| Random | 24,525 | 0.7 | 16.85% | 4.5% |
+
+Bandit selects more engaged users with better history, so user selection isn't causing lower opens.
+
+### Root Cause: Thompson Sampling Exploration
+
+The Bandit is **deliberately exploring low-score treatment-user combinations**.
+
+For the **same treatments**, score comparison:
+
+| Treatment ID | Bandit Avg Score | Random Avg Score | Ratio |
+|--------------|------------------|------------------|-------|
+| 21265506 | 0.156 | 0.906 | **6x lower** |
+| 17049625 | 0.086 | 0.628 | **7x lower** |
+| 21265451 | 0.099 | 0.794 | **8x lower** |
+| 16444546 | 0.043 | 0.480 | **11x lower** |
+| 21265458 | 0.112 | 0.873 | **8x lower** |
+
+The Bandit is sending treatments to users where the scoring model predicts **poor engagement** (low scores). This is exploration - trying low-probability options to gather data.
+
+### Same Treatment, Different Open Rates
+
+When comparing identical treatments across models:
+
+| Treatment | Random Open Rate | Bandit Open Rate | Delta |
+|-----------|------------------|------------------|-------|
+| Browse Recovery - 1 Item (17049625) | 2.24% | 0.83% | -1.41% |
+| Browse Recovery - 2 Items (21265492) | 1.67% | 0.0% | -1.67% |
+| Browse Recovery - 4 Items (21265506) | 2.12% | 1.44% | -0.67% |
+| Abandon Cart - 2 Items (17049596) | 4.92% | 2.27% | -2.65% |
+
+For 13 of 15 treatments with sufficient volume, Bandit has **lower open rates** than Random.
+
+### Explanation
+
+1. **Low scores = poor predicted match**: Bandit selects user-treatment pairs the model thinks won't work
+2. **Users don't open**: When sent a treatment that's a poor match, users are less likely to open
+3. **But when they DO open, they click**: Those who open despite the poor match are genuinely interested
+4. **Higher CTR/open**: 12% vs 8.4% because openers are self-selected high-intent users
+
+### Thompson Sampling Trade-off
+
+| Aspect | Short-term Impact | Long-term Benefit |
+|--------|-------------------|-------------------|
+| Exploration | Lower open rate | Better model learning |
+| Low-score tests | Hurts CTR/send | Discovers hidden good matches |
+| Concentrated exploration | Sub-optimal performance | Faster convergence |
+
+The Bandit is working as designed - it's exploring to learn, which hurts short-term performance but enables long-term optimization.
+
+---
 
 ## Data Sources
 
