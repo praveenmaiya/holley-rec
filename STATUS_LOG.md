@@ -5,6 +5,31 @@
 
 ---
 
+## 2025-12-17 (Tuesday)
+
+### Focus: Unbiased CTR Analysis & Table Reference Fixes
+
+Corrected CTR analysis with proper BigQuery tables and documented key finding: "Static" = only Apparel emails.
+
+**Key Results (Eligible Users):**
+| Treatment | Sends | Clicks | CTR |
+|-----------|-------|--------|-----|
+| Personalized | 9,385 | 61 | 4.81% |
+| Static | 1,824 | 39 | 11.89% |
+
+**Within-User (428 users got both):** Static 9.23% vs Personalized 5.12%
+
+**Critical Finding:** Only 1 of 22 static treatments sent (Apparel & Collectibles). Other 21 have 0 sends.
+
+**Doc Updates:**
+- Fixed table references: `ingestion_unified_*` (not `imported_unified_*`)
+- Added complete table list to AGENTS.md, bigquery.md
+- Updated CTR analysis report with corrected numbers
+
+**Commits:** `5c607ed`, `c409fe5`
+
+---
+
 ## 2025-12-16 (Monday)
 
 ### Focus: Daily Run Setup & Production Deployment
