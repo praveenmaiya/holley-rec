@@ -11,8 +11,8 @@ The original analysis comparing Personalized Fitment vs Static recommendations w
 | Analysis Type | Personalized CTR | Static CTR | Winner |
 |---------------|------------------|------------|--------|
 | Original (biased) | 9.62% | 7.51% | Personalized (+28%) |
-| Eligible users only | 4.86% | 9.62% | **Static (+98%)** |
-| Within-user (gold standard) | 5.12% | 9.38% | **Static (+83%)** |
+| Eligible users only | 4.81% | 11.89% | **Static (+147%)** |
+| Within-user (gold standard) | 5.12% | 9.23% | **Static (+80%)** |
 
 ## The Problem: Selection Bias
 
@@ -109,51 +109,37 @@ model_id = 195001001:  4,647 sends (~2%)  - Bandit model
 
 ## Unbiased Analysis Results
 
-### Analysis 1: MECE Breakdown (All 4 Groups)
+### Analysis 1: MECE Breakdown
 
 ```
-┌─────────────────────────────┬────────────────┬─────────┬────────┬────────┬───────┬───────┐
-│ Eligibility                 │ Treatment      │  Sends  │ Opens  │ Clicks │ Open% │  CTR  │
-├─────────────────────────────┼────────────────┼─────────┼────────┼────────┼───────┼───────┤
-│ Eligible (has vehicle)      │ Personalized   │  8,602  │ 1,255  │   61   │ 14.6% │ 4.86% │
-│ Eligible (has vehicle)      │ Static         │    918  │   156  │   15   │ 17.0% │ 9.62% │
-├─────────────────────────────┼────────────────┼─────────┼────────┼────────┼───────┼───────┤
-│ Not Eligible (no vehicle)   │ Static         │ 39,394  │ 3,933  │  228   │ 10.0% │ 5.80% │
-│ Not Eligible (no vehicle)   │ Personalized   │    209  │    13  │    0   │  6.2% │ 0.00% │
-└─────────────────────────────┴────────────────┴─────────┴────────┴────────┴───────┴───────┘
+┌─────────────────────────────┬────────────────┬─────────┬────────┬────────┬───────┬────────┐
+│ Eligibility                 │ Treatment      │  Sends  │ Opens  │ Clicks │ Open% │  CTR   │
+├─────────────────────────────┼────────────────┼─────────┼────────┼────────┼───────┼────────┤
+│ Eligible (has vehicle)      │ Personalized   │  9,385  │ 1,268  │   61   │ 13.5% │  4.81% │
+│ Eligible (has vehicle)      │ Static         │  1,824  │   328  │   39   │ 18.0% │ 11.89% │
+├─────────────────────────────┼────────────────┼─────────┼────────┼────────┼───────┼────────┤
+│ Not Eligible (no vehicle)   │ Static         │ 39,488  │ 3,761  │  204   │  9.5% │  5.42% │
+└─────────────────────────────┴────────────────┴─────────┴────────┴────────┴───────┴────────┘
 ```
 
 **For eligible users (apples-to-apples)**:
-- Personalized: 4.86% CTR
-- Static: 9.62% CTR
-- **Δ = -4.76%** (Static wins by 98%)
+- Personalized: 4.81% CTR
+- Static: 11.89% CTR
+- **Δ = -7.08%** (Static wins by 147%)
 
-### Analysis 2: Fair Period Only (Dec 4-11, boost_factor=1.0)
+### Analysis 2: Within-User Comparison (Gold Standard)
 
-```
-┌─────────────────────────────┬────────────────┬─────────┬────────┬────────┬───────┬───────┐
-│ Eligibility                 │ Treatment      │  Sends  │ Opens  │ Clicks │ Open% │  CTR  │
-├─────────────────────────────┼────────────────┼─────────┼────────┼────────┼───────┼───────┤
-│ Eligible                    │ Personalized   │  5,922  │   957  │   49   │ 16.2% │ 5.12% │
-│ Eligible                    │ Static         │    900  │   156  │   15   │ 17.3% │ 9.62% │
-├─────────────────────────────┼────────────────┼─────────┼────────┼────────┼───────┼───────┤
-│ Not Eligible                │ Static         │ 34,052  │ 3,165  │  190   │  9.3% │ 6.00% │
-└─────────────────────────────┴────────────────┴─────────┴────────┴────────┴───────┴───────┘
-```
-
-### Analysis 3: Within-User Comparison (Gold Standard)
-
-424 users received **both** Personalized and Static treatments at different times.
+428 users received **both** Personalized and Static treatments at different times.
 
 ```
 ┌────────────────┬───────┬───────────────┬────────┬────────┬───────┬───────┐
 │ Treatment      │ Sends │ Unique Users  │ Opens  │ Clicks │ Open% │  CTR  │
 ├────────────────┼───────┼───────────────┼────────┼────────┼───────┼───────┤
-│ Personalized   │ 1,763 │     424       │  254   │   13   │ 14.4% │ 5.12% │
-│ Static         │   800 │     424       │  128   │   12   │ 16.0% │ 9.38% │
+│ Personalized   │ 1,899 │     428       │  254   │   13   │ 13.4% │ 5.12% │
+│ Static         │   808 │     428       │  130   │   12   │ 16.1% │ 9.23% │
 └────────────────┴───────┴───────────────┴────────┴────────┴───────┴───────┘
 
-Δ = 5.12% - 9.38% = -4.26% (Static wins by 83%)
+Δ = 5.12% - 9.23% = -4.11% (Static wins by 80%)
 ```
 
 This is the most unbiased estimate because it compares the **same users** under different treatments, controlling for all user-level confounders.
@@ -165,8 +151,8 @@ The +28% lift for personalized was an artifact of comparing different user popul
 
 ### 2. Static Actually Outperforms Personalized
 When properly controlled:
-- Eligible users: Static CTR is 2x higher (9.62% vs 4.86%)
-- Within-user: Static CTR is 1.8x higher (9.38% vs 5.12%)
+- Eligible users: Static CTR is 2.5x higher (11.89% vs 4.81%)
+- Within-user: Static CTR is 1.8x higher (9.23% vs 5.12%)
 
 ### 3. System Is Not Truly Random
 Even with model_id=1 ("random" model):
@@ -175,38 +161,44 @@ Even with model_id=1 ("random" model):
 - Result: Eligible users 6-9x more likely to get personalized
 
 ### 4. Sample Size Imbalance
-- Eligible users: 8,602 personalized vs 918 static (9:1 ratio)
-- Within-user comparison: 1,763 personalized vs 800 static sends
+- Eligible users: 9,385 personalized vs 1,824 static (5:1 ratio)
+- Within-user comparison: 1,899 personalized vs 808 static sends
 - Click counts are small (13 vs 12 in within-user analysis)
+
+### 5. Critical: "Static" = Only Apparel
+Only 1 of 22 static treatments was ever sent:
+- **16490939** (Holley Apparel & Collectibles): 41,465 sends
+- **21 other static treatments** (Sniper 2, Terminator X, Brothers, etc.): **0 sends**
+
+The comparison is actually Personalized Fitment vs Apparel, not vs product-specific recommendations.
 
 ## Caveats and Limitations
 
-1. **Small click counts**: Statistical significance is limited with 13 vs 12 clicks
+1. **Small click counts**: Statistical significance is limited with 13 vs 12 clicks in within-user analysis
 2. **Time ordering**: Users may have received treatments at different times, introducing temporal confounds
-3. **Product specificity**: Static treatments target specific products (Sniper 2, Brothers, Terminator X) vs generic personalized recommendations
+3. **Static = Apparel only**: Only 1 of 22 static treatments (Holley Apparel & Collectibles) was actually sent - not a fair comparison to product-specific recommendations
 4. **Vehicle data timing**: Some users may have added vehicle data after receiving treatments
-5. **209 anomalous sends**: Non-eligible users received personalized treatments (data quality issue)
 
 ## Recommendations
 
 1. **Set boost_factor = 1.0 for all treatments** to enable fair A/B testing
-2. **Implement true randomization** within eligible user pool
-3. **Increase sample size** for static sends to eligible users before drawing conclusions
-4. **Consider product-specific analysis** - some static treatments may perform differently
-5. **Track treatment effect by subject line** - the "Thanks" variant had highest CTR in original analysis
+2. **Enable the other 21 static treatments** (Sniper 2, Terminator X, Brothers, etc.) - currently have 0 sends
+3. **Implement true randomization** within eligible user pool
+4. **Increase sample size** for static sends to eligible users before drawing conclusions
+5. **Don't conclude Personalized is worse** - current comparison is Apparel vs Personalized, not a fair test
 
 ## SQL Queries Used
 
 ### Query 1: MECE Breakdown
 ```sql
--- See full query in analysis notebook
--- Key joins: treatment_history_sent + imported_unified_attributes + treatment_interaction
--- Filters: model_id = 1, surface_id = 929, request_source = "LIVE"
+-- Key joins: treatment_history_sent + ingestion_unified_attributes_schema_incremental + treatment_interaction
+-- Filters: model_id = 1, request_source = "LIVE"
+-- Vehicle eligibility: users with v1_year, v1_make, v1_model properties
 ```
 
 ### Query 2: Within-User Comparison
 ```sql
--- Identifies 424 users who received both treatment types
+-- Identifies 428 users who received both treatment types
 -- Compares CTR for same users under different treatments
 -- Gold standard for causal inference
 ```
