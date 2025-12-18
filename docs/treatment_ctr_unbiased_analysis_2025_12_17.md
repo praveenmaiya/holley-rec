@@ -1,7 +1,7 @@
 # Unbiased Treatment CTR Analysis: Personalized vs Static Recommendations
 
-**Date**: December 17, 2025
-**Analysis Period**: Last 60-90 days
+**Date**: December 17, 2025 (updated December 18, 2025)
+**Analysis Period**: December 4-18, 2025 (14 days, 243,628 sends)
 **Author**: Claude Code analysis
 
 ## Executive Summary
@@ -171,6 +171,12 @@ Only 1 of 22 static treatments was ever sent:
 - **21 other static treatments** (Sniper 2, Terminator X, Brothers, etc.): **0 sends**
 
 The comparison is actually Personalized Fitment vs Apparel, not vs product-specific recommendations.
+
+## Why Personalized May Underperform (Hypotheses)
+
+1. **Price point**: Apparel emails show $20-50 items (impulse buy) vs Personalized shows $200-500 parts (avg $337, requires consideration)
+2. **Subject lines**: Personalized uses abstract copy ("Got plans?") vs Apparel has direct product messaging
+3. **Small sample**: Only 13 vs 12 clicks in within-user comparison - not statistically significant
 
 ## Caveats and Limitations
 
