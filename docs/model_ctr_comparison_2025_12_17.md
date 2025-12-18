@@ -9,57 +9,58 @@ Comparing CTR between two models:
 - **Random Model (model_id=1)**: ~90% traffic, random treatment selection
 - **Bandit Click Model (model_id=195001001)**: ~10% traffic, Thompson Sampling based on clicks
 
-## Results (Dec 16, 2025)
+## Results (Dec 16, 2025) - Updated Dec 17
 
 | Model | Sends | Opens | Clicks | Open Rate | CTR/Send | CTR/Open |
 |-------|-------|-------|--------|-----------|----------|----------|
-| **Random Model** | 24,550 | 546 | 46 | **2.22%** | 0.19% | 8.42% |
-| **Bandit Click Model** | 2,289 | 25 | 3 | 1.09% | 0.13% | **12.0%** |
+| **Random Model** | 24,722 | 661 | 62 | **2.67%** | 0.25% | 9.38% |
+| **Bandit Click Model** | 2,301 | 29 | 9 | 1.26% | **0.39%** | **31.03%** |
 
 ### Traffic Split
 
 | Model | Sends | % Traffic |
 |-------|-------|-----------|
-| Random | 24,550 | 91.5% |
-| Bandit | 2,289 | 8.5% |
+| Random | 24,722 | 91.5% |
+| Bandit | 2,301 | 8.5% |
 
 ## Key Observations
 
 ### 1. Open Rate
-- **Random wins**: 2.22% vs 1.09%
-- Bandit has ~50% lower open rate
+- **Random wins**: 2.67% vs 1.26%
+- Bandit has ~53% lower open rate
 - **Root cause**: Thompson Sampling exploration - Bandit deliberately tests low-score user-treatment pairs (see Deep Dive below)
 
 ### 2. CTR per Open
-- **Bandit wins**: 12.0% vs 8.42%
-- When users open, Bandit emails get +43% more clicks
+- **Bandit wins**: 31.03% vs 9.38% (3.3x higher!)
+- When users open, Bandit emails get dramatically more clicks
 - **Explanation**: Users who open despite low predicted scores are self-selected high-intent users (see Deep Dive below)
 
 ### 3. CTR per Send
-- **Random wins**: 0.19% vs 0.13%
-- Lower open rate drags down Bandit's overall performance
+- **Bandit wins**: 0.39% vs 0.25% (+56%)
+- Despite lower open rate, Bandit's superior CTR/Open more than compensates
 - This is the metric that matters for business impact
 
 ### 4. Sample Size
-- Bandit: Only **3 clicks** - too small for statistical significance
-- Random: 46 clicks - still small but more reliable
-- Need more data before drawing conclusions
+- Bandit: **9 clicks** - still small but improving
+- Random: 62 clicks - more reliable
+- Need more data before drawing firm conclusions
 
 ## Data Lag Note
 
 | Date | Random Opens | Bandit Opens |
 |------|--------------|--------------|
-| Dec 16 | 546 | 25 |
+| Dec 16 | 661 | 29 |
 | Dec 17 | 0 | 0 |
-| Dec 18 | 0 | 0 |
 
-Dec 17-18 show 0 interactions due to data pipeline lag (~1 day delay).
+Dec 17 shows 0 interactions due to data pipeline lag (~1 day delay).
 
 ## Verdict
 
-**Too early to conclude.** Only 1 day of data with 3 Bandit clicks.
+**Promising early results.** With updated data (9 Bandit clicks vs 62 Random clicks):
 
-The higher CTR/Open (12% vs 8.4%) is promising but not statistically significant with n=3.
+- Bandit now **wins on CTR/Send** (0.39% vs 0.25%) - the business metric that matters
+- CTR/Open is 3.3x higher (31% vs 9.4%)
+- Still early (9 clicks), but trend is positive
 
 ## Recommendations
 
@@ -116,7 +117,7 @@ For 13 of 15 treatments with sufficient volume, Bandit has **lower open rates** 
 1. **Low scores = poor predicted match**: Bandit selects user-treatment pairs the model thinks won't work
 2. **Users don't open**: When sent a treatment that's a poor match, users are less likely to open
 3. **But when they DO open, they click**: Those who open despite the poor match are genuinely interested
-4. **Higher CTR/open**: 12% vs 8.4% because openers are self-selected high-intent users
+4. **Higher CTR/open**: 31% vs 9.4% because openers are self-selected high-intent users
 
 ### Thompson Sampling Trade-off
 
