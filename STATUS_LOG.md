@@ -7,42 +7,16 @@
 
 ## 2025-12-18 (Wednesday)
 
-### Focus: QA Follow-up on CTR Analysis
+### Focus: QA Follow-up & Doc Refresh
 
-Answered QA questions about the Personalized vs Static CTR analysis.
-
-#### 1. Date Range Clarification
-
-**Q:** What is the date range of this analysis?
-
-**A:** December 4-18, 2025 (14 days, 243,628 total sends)
-
-#### 2. Price Point Verification
-
-**Q:** "Price point: Apparel ($20-50) is impulse buy vs parts ($100-500+)" - Do you have purchase stats?
-
-**A:** Verified from `final_vehicle_recommendations` table:
-
-| Treatment | Items Shown in Email | Source |
-|-----------|---------------------|--------|
-| Apparel | $20-50 (hats, hoodies) | Treatment content |
-| Personalized | **$337 avg** (86% in $200-500) | Recommendation table |
-
-**Conclusion:** Price point hypothesis is valid - cheap items easier to impulse click.
-
-#### 3. Lesson Learned: Email Content vs Post-Purchase AOV
-
-Initially confused two metrics:
-- **Email content price**: What's shown in email (Apparel $20-50, Personalized $337)
-- **Post-purchase AOV**: What users buy after clicking (different metric)
-
-Post-purchase AOV showed Apparel clickers ($291) > Personalized ($133), but this measures what people BUY after landing on site, not what the email showed. A user can click a $25 hat and buy a $1,300 EFI kit.
+- Answered QA questions on CTR analysis (date range, price point stats)
+- Verified price point hypothesis: Apparel shows $20-50 items, Personalized shows $337 avg
+- Refreshed CTR doc with latest numbers (Static still wins by ~2.3x)
+- Clarified distinction between email content price vs post-purchase AOV
 
 **Doc Updated:** `docs/treatment_ctr_unbiased_analysis_2025_12_17.md`
-- Added exact date range
-- Added "Why Personalized May Underperform" hypotheses section
 
-**Commit:** `570e4e3`
+**Commits:** `570e4e3`, `355d52e`, `ba06987`
 
 ---
 
