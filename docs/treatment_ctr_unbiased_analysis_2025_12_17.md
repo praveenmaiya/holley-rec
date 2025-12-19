@@ -1,7 +1,8 @@
 # Unbiased Treatment CTR Analysis: Personalized vs Static Recommendations
 
 **Date**: December 17, 2025 (updated December 18, 2025)
-**Analysis Period**: December 4-18, 2025 (14 days, 243,628 sends)
+**Analysis Period**: December 4-18, 2025 (14 days, ~244K sends)
+**Last Refreshed**: December 18, 2025
 **Author**: Claude Code analysis
 
 ## Executive Summary
@@ -11,7 +12,7 @@ The original analysis comparing Personalized Fitment vs Static recommendations w
 | Analysis Type | Personalized CTR | Static CTR | Winner |
 |---------------|------------------|------------|--------|
 | Original (biased) | 9.62% | 7.51% | Personalized (+28%) |
-| Eligible users only | 4.81% | 11.89% | **Static (+147%)** |
+| Eligible users only | 5.0% | 11.68% | **Static (+134%)** |
 | Within-user (gold standard) | 5.12% | 9.23% | **Static (+80%)** |
 
 ## The Problem: Selection Bias
@@ -115,17 +116,15 @@ model_id = 195001001:  4,647 sends (~2%)  - Bandit model
 ┌─────────────────────────────┬────────────────┬─────────┬────────┬────────┬───────┬────────┐
 │ Eligibility                 │ Treatment      │  Sends  │ Opens  │ Clicks │ Open% │  CTR   │
 ├─────────────────────────────┼────────────────┼─────────┼────────┼────────┼───────┼────────┤
-│ Eligible (has vehicle)      │ Personalized   │  9,385  │ 1,268  │   61   │ 13.5% │  4.81% │
-│ Eligible (has vehicle)      │ Static         │  1,824  │   328  │   39   │ 18.0% │ 11.89% │
-├─────────────────────────────┼────────────────┼─────────┼────────┼────────┼───────┼────────┤
-│ Not Eligible (no vehicle)   │ Static         │ 39,488  │ 3,761  │  204   │  9.5% │  5.42% │
+│ Eligible (has vehicle)      │ Personalized   │  9,903  │ 1,301  │   65   │ 13.1% │  5.00% │
+│ Eligible (has vehicle)      │ Static         │  1,853  │   334  │   39   │ 18.0% │ 11.68% │
 └─────────────────────────────┴────────────────┴─────────┴────────┴────────┴───────┴────────┘
 ```
 
 **For eligible users (apples-to-apples)**:
-- Personalized: 4.81% CTR
-- Static: 11.89% CTR
-- **Δ = -7.08%** (Static wins by 147%)
+- Personalized: 5.0% CTR (65 clicks / 1,301 opens)
+- Static: 11.68% CTR (39 clicks / 334 opens)
+- **Δ = -6.68%** (Static wins by 134%)
 
 ### Analysis 2: Within-User Comparison (Gold Standard)
 
@@ -151,7 +150,7 @@ The +28% lift for personalized was an artifact of comparing different user popul
 
 ### 2. Static Actually Outperforms Personalized
 When properly controlled:
-- Eligible users: Static CTR is 2.5x higher (11.89% vs 4.81%)
+- Eligible users: Static CTR is 2.3x higher (11.68% vs 5.0%)
 - Within-user: Static CTR is 1.8x higher (9.23% vs 5.12%)
 
 ### 3. System Is Not Truly Random
@@ -161,9 +160,9 @@ Even with model_id=1 ("random" model):
 - Result: Eligible users 6-9x more likely to get personalized
 
 ### 4. Sample Size Imbalance
-- Eligible users: 9,385 personalized vs 1,824 static (5:1 ratio)
+- Eligible users: 9,903 personalized vs 1,853 static (5:1 ratio)
 - Within-user comparison: 1,899 personalized vs 808 static sends
-- Click counts are small (13 vs 12 in within-user analysis)
+- Click counts are small (65 vs 39 in eligible, 13 vs 12 in within-user)
 
 ### 5. Critical: "Static" = Only Apparel
 Only 1 of 22 static treatments was ever sent:
@@ -176,11 +175,11 @@ The comparison is actually Personalized Fitment vs Apparel, not vs product-speci
 
 1. **Price point**: Apparel emails show $20-50 items (impulse buy) vs Personalized shows $200-500 parts (avg $337, requires consideration)
 2. **Subject lines**: Personalized uses abstract copy ("Got plans?") vs Apparel has direct product messaging
-3. **Small sample**: Only 13 vs 12 clicks in within-user comparison - not statistically significant
+3. **Small sample**: 65 vs 39 clicks in eligible comparison, 13 vs 12 in within-user - limited statistical significance
 
 ## Caveats and Limitations
 
-1. **Small click counts**: Statistical significance is limited with 13 vs 12 clicks in within-user analysis
+1. **Small click counts**: 65 vs 39 clicks in eligible, 13 vs 12 clicks in within-user analysis
 2. **Time ordering**: Users may have received treatments at different times, introducing temporal confounds
 3. **Static = Apparel only**: Only 1 of 22 static treatments (Holley Apparel & Collectibles) was actually sent - not a fair comparison to product-specific recommendations
 4. **Vehicle data timing**: Some users may have added vehicle data after receiving treatments
