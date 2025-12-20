@@ -356,4 +356,96 @@ This is the **exploration-exploitation trade-off** - sacrificing some short-term
 
 ---
 
-*Document created: December 17, 2025*
+## NIG Priors vs CTR Smoothing
+
+**Date**: December 20, 2025
+
+### The Problem: Low-Impression, High-CTR Treatments
+
+A treatment with 1 click / 2 views shows **50% CTR**. Without correction, the bandit might over-select this treatment despite the tiny sample size.
+
+### Solution 1: Laplace Smoothing (Additive Smoothing)
+
+Add "pseudo-counts" to regularize CTR:
+
+```
+Raw CTR:       clicks / views
+Smoothed CTR:  (clicks + click_smoother) / (views + view_smoother)
+
+Example with click_smoother=1, view_smoother=300:
+  Raw:      1 / 2 = 50%
+  Smoothed: (1 + 1) / (2 + 300) = 2/302 = 0.66%
+```
+
+This forces all treatments to start near a baseline CTR (in this case ~0.3%).
+
+**Downside**: Fixed baseline (0.3%) may not be appropriate for all surfaces. Some have naturally higher/lower CTR.
+
+### Solution 2: Empirical Bayes Reparameterization
+
+Instead of fixed smoothers, tie them to observed average CTR:
+
+```
+Parameters:
+  prior_baseline_factor: 0.2  (e.g., 20% of average CTR)
+  prior_strength: 100         (pseudo-observations)
+
+If average treatment CTR = c, then:
+  view_count_smoother = prior_strength = 100
+  click_count_smoother = prior_baseline_factor × c × view_count_smoother
+```
+
+**Benefit**: Adapts automatically to different surfaces/companies with different baseline CTRs.
+
+### Solution 3: NIG (Normal-Inverse-Gamma) Prior
+
+**This is what our Thompson Sampling implementation uses.**
+
+NIG is a Bayesian conjugate prior that models uncertainty around both:
+- **Mean** (expected CTR)
+- **Variance** (how uncertain we are)
+
+**How it solves the low-impression problem:**
+
+| Observations | NIG Behavior |
+|--------------|--------------|
+| Few views | High uncertainty → pulls estimate toward prior mean |
+| Many views | Low uncertainty → trusts observed CTR |
+
+```
+Treatment A: 1 click / 2 views
+  → NIG says: "Very uncertain, treat as ~prior mean (e.g., 2%)"
+
+Treatment B: 100 clicks / 1000 views
+  → NIG says: "Confident, trust observed 10% CTR"
+```
+
+### Why NIG is Preferred
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| Laplace Smoothing | Simple, easy to understand | Fixed baseline, need to tune 2 params |
+| Empirical Bayes | Adapts to different CTRs | More complex, still need 2 params |
+| **NIG Prior** | Naturally handles uncertainty, theoretically grounded | Harder to explain |
+
+**Key insight**: NIG already does what smoothing tries to do—it prevents overconfidence in treatments with few observations. So we don't need separate smoothers.
+
+### Hyperparameters to Expose
+
+Instead of adding smoothing parameters, expose the NIG priors directly:
+
+| Parameter | What it controls |
+|-----------|------------------|
+| `mu_0` (prior mean) | Baseline expected CTR before seeing data |
+| `kappa_0` (prior strength) | How strongly to weight the prior |
+| `alpha_0`, `beta_0` | Prior on variance (uncertainty) |
+
+Alternatively, a simplified version:
+- `default_mean` - prior mean CTR
+- `default_std_dev` - prior uncertainty
+
+These can be tuned per company/surface as needed.
+
+---
+
+*Document updated: December 20, 2025*
