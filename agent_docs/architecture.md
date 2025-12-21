@@ -60,7 +60,7 @@ Score Range: 0-90 (typical: 5-25)
 
 ## Filters Applied
 
-1. **Price ≥ $20** - Exclude cheap accessories
+1. **Price ≥ $50** - Exclude cheap accessories (raised from $20 in v5.6)
 2. **HTTPS image** - Email client compatibility
 3. **Not refurbished** - `Tags != 'Refurbished'`
 4. **Not service SKU** - Exclude EXT-, GIFT-, WARRANTY-, SERVICE-, PREAUTH-

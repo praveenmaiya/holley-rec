@@ -38,6 +38,7 @@ Vehicle fitment recommendations for automotive parts using collaborative filteri
 | `configs/static_treatments.csv` | 22 Static treatment IDs |
 | `docs/campaign_reports_2025_12_10.md` | Post-purchase email campaign analysis |
 | `docs/treatment_ctr_unbiased_analysis_2025_12_17.md` | Unbiased CTR analysis (Personalized vs Static) |
+| `docs/release_notes.md` | Pipeline version history and changes |
 | `docs/pipeline_run_stats.md` | Pipeline run history & comparison stats |
 | `src/bandit_click_holley.py` | Email treatment Click Bandit analysis |
 | `agent_docs/postgres_treatments.md` | PostgreSQL treatment DB queries & schema |

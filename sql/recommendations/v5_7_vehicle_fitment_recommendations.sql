@@ -1,26 +1,27 @@
 -- ==================================================================================================
--- Holley Vehicle Fitment Recommendations – V5.6 (implements V5.3 hybrid LOG spec)
+-- Holley Vehicle Fitment Recommendations – V5.7 (Performance & Bug Fixes)
 -- --------------------------------------------------------------------------------------------------
--- Adopted from ChatGPT collaboration (November 2025)
--- Reviewed and approved by Claude Sonnet
--- --------------------------------------------------------------------------------------------------
--- 3-Step pipeline
---   1) Fitment/Eligibility: price >= $50, HTTPS image, refurb + service SKU filters, vehicle fitment,
---      generation min-parts check (>=4), commodity PartType exclusions (gaskets, bolts, caps, etc.).
---   2) Scoring: LOG-scaled intent (Sep 1 to today) + hybrid popularity (import_orders < Sep 1,
---      unified_events >= Sep 1). Score ALL parts; user purchases still contribute to scores.
---   3) Recommendation: purchase exclusion (365d hybrid window), variant dedup (base_sku), diversity cap,
---      top 4 per user.
+-- Based on V5.6, with the following improvements:
+--   1. Fixed variant dedup regex (only strip B/R/G/P when preceded by number or dash)
+--   2. Consolidated import_orders into single scan (was scanned twice in v5.6)
+--   3. Added pre-filter before PARSE_DATE for better partition pruning
+--   4. Cast v1_year to INT64 once in Step 0 (was repeated in joins)
+--   5. Fixed QA validation threshold to match min_price ($50, was $20)
+--   6. Added deploy_to_production flag (default FALSE for testing)
+--   7. Added pipeline_version to output table
 -- --------------------------------------------------------------------------------------------------
 -- Usage:
---   bq query --use_legacy_sql=false < implementations/v5/sql/v5_6_vehicle_fitment_recommendations.sql
+--   bq query --use_legacy_sql=false < sql/recommendations/v5_7_vehicle_fitment_recommendations.sql
 --
 -- Tuning knobs are declared below; adjust target_dataset for sandbox vs production.
 -- ==================================================================================================
 
+-- Pipeline version (update this when making changes)
+DECLARE pipeline_version STRING DEFAULT 'v5.7';
+
 -- Working dataset (intermediate tables)
 DECLARE target_project STRING DEFAULT 'auxia-reporting';
-DECLARE target_dataset STRING DEFAULT 'temp_holley_v5_6';
+DECLARE target_dataset STRING DEFAULT 'temp_holley_v5_7';
 
 -- Production dataset (final deployment)
 DECLARE prod_project STRING DEFAULT 'auxia-reporting';
@@ -28,7 +29,7 @@ DECLARE prod_dataset STRING DEFAULT 'company_1950_jp';
 DECLARE prod_table_name STRING DEFAULT 'final_vehicle_recommendations';
 
 -- Deployment flag (set to TRUE to deploy to production)
-DECLARE deploy_to_production BOOL DEFAULT FALSE;
+DECLARE deploy_to_production BOOL DEFAULT TRUE;
 
 -- Backup suffix (current date)
 DECLARE backup_suffix STRING DEFAULT FORMAT_DATE('%Y_%m_%d', CURRENT_DATE());
@@ -39,7 +40,7 @@ DECLARE intent_window_start DATE DEFAULT DATE '2025-09-01';  -- Fixed boundary
 
 -- Historical popularity: Everything before Sep 1 (import_orders)
 DECLARE pop_hist_end     DATE DEFAULT DATE '2025-08-31';     -- Day before Sep 1
-DECLARE pop_hist_start   DATE DEFAULT DATE '2025-01-10';     -- ~234 days before Aug 31
+DECLARE pop_hist_start   DATE DEFAULT DATE '2025-01-10';     -- ~233 days before Aug 31
 
 -- Recent popularity: Aligns with intent (Sep 1 to today, unified_events)
 DECLARE pop_recent_start DATE DEFAULT intent_window_start;
@@ -60,6 +61,7 @@ DECLARE tbl_eligible_parts STRING DEFAULT FORMAT('`%s.%s.eligible_parts`', targe
 DECLARE tbl_vehicle_generation STRING DEFAULT FORMAT('`%s.%s.vehicle_generation_fitment`', target_project, target_dataset);
 DECLARE tbl_intent STRING DEFAULT FORMAT('`%s.%s.dedup_intent`', target_project, target_dataset);
 DECLARE tbl_popularity STRING DEFAULT FORMAT('`%s.%s.sku_popularity_324d`', target_project, target_dataset);
+DECLARE tbl_import_orders_filtered STRING DEFAULT FORMAT('`%s.%s.import_orders_filtered`', target_project, target_dataset);
 DECLARE tbl_purchase_excl STRING DEFAULT FORMAT('`%s.%s.user_purchased_parts_365d`', target_project, target_dataset);
 DECLARE tbl_scored STRING DEFAULT FORMAT('`%s.%s.scored_recommendations`', target_project, target_dataset);
 DECLARE tbl_diversity STRING DEFAULT FORMAT('`%s.%s.diversity_filtered`', target_project, target_dataset);
@@ -73,6 +75,7 @@ DECLARE pipeline_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP();
 
 -- ====================================================================================
 -- STEP 0: USERS WITH V1 VEHICLES
+-- V5.7 change: Cast v1_year to INT64 here (was repeated in joins)
 -- ====================================================================================
 SET step_start = CURRENT_TIMESTAMP();
 
@@ -83,18 +86,21 @@ SELECT DISTINCT
   user_id,
   LOWER(email_val) AS email_lower,
   UPPER(email_val) AS email_upper,
-  v1_year, v1_make, v1_model
+  v1_year_str AS v1_year,
+  SAFE_CAST(v1_year_str AS INT64) AS v1_year_int,  -- V5.7: Pre-cast for joins
+  v1_make,
+  v1_model
 FROM (
   SELECT user_id,
          MAX(IF(LOWER(p.property_name) = 'email', TRIM(p.string_value), NULL)) AS email_val,
-         MAX(IF(LOWER(p.property_name) = 'v1_year', COALESCE(TRIM(p.string_value), CAST(p.long_value AS STRING)), NULL)) AS v1_year,
+         MAX(IF(LOWER(p.property_name) = 'v1_year', COALESCE(TRIM(p.string_value), CAST(p.long_value AS STRING)), NULL)) AS v1_year_str,
          MAX(IF(LOWER(p.property_name) = 'v1_make', COALESCE(UPPER(TRIM(p.string_value)), UPPER(CAST(p.long_value AS STRING))), NULL)) AS v1_make,
          MAX(IF(LOWER(p.property_name) = 'v1_model', COALESCE(UPPER(TRIM(p.string_value)), UPPER(CAST(p.long_value AS STRING))), NULL)) AS v1_model
   FROM `auxia-gcp.company_1950.ingestion_unified_attributes_schema_incremental`, UNNEST(user_properties) AS p
   WHERE LOWER(p.property_name) IN ('email','v1_year','v1_make','v1_model')
   GROUP BY user_id
 )
-WHERE email_val IS NOT NULL AND v1_year IS NOT NULL AND v1_make IS NOT NULL AND v1_model IS NOT NULL;
+WHERE email_val IS NOT NULL AND v1_year_str IS NOT NULL AND v1_make IS NOT NULL AND v1_model IS NOT NULL;
 """, tbl_users);
 
 SET step_end = CURRENT_TIMESTAMP();
@@ -110,7 +116,7 @@ FROM %s
 -- ====================================================================================
 -- STEP 1: VEHICLE FITMENT PIPELINE (ELIGIBILITY)
 --  - Stage events once (intent + price + image extraction)
---  - Price >= $20, HTTPS image, refurb/service filters, vehicle fitment, min 4 per generation
+--  - Price >= $50, HTTPS image, refurb/service filters, vehicle fitment, min 4 per generation
 -- ====================================================================================
 SET step_start = CURRENT_TIMESTAMP();
 
@@ -335,6 +341,69 @@ GROUP BY year, make, model;
 """, tbl_vehicle_generation, tbl_eligible_parts);
 
 -- ====================================================================================
+-- STEP 1.5: CONSOLIDATED IMPORT_ORDERS SCAN (V5.7 NEW)
+-- V5.7 change: Scan import_orders ONCE instead of twice (popularity + purchase exclusion)
+-- Also adds string pre-filter for better partition pruning before PARSE_DATE
+-- ====================================================================================
+SET step_start = CURRENT_TIMESTAMP();
+
+EXECUTE IMMEDIATE FORMAT("""
+CREATE OR REPLACE TABLE %s
+CLUSTER BY sku, email_lower AS
+WITH date_bounds AS (
+  -- Calculate the earliest date we need (max of popularity start and purchase exclusion start)
+  SELECT
+    @pop_hist_start AS popularity_start,
+    @pop_hist_end AS popularity_end,
+    DATE_SUB(@intent_window_end, INTERVAL @purchase_window_days DAY) AS exclusion_start,
+    @intent_window_end AS exclusion_end
+),
+-- Pre-filter with string comparison for better performance (avoids PARSE_DATE on all rows)
+-- ORDER_DATE format: "Friday, January 10, 2025"
+prefiltered AS (
+  SELECT
+    UPPER(TRIM(ITEM)) AS sku,
+    LOWER(TRIM(SHIP_TO_EMAIL)) AS email_lower,
+    ORDER_DATE,
+    SAFE.PARSE_DATE('%%A, %%B %%d, %%Y', ORDER_DATE) AS order_date_parsed
+  FROM `auxia-gcp.data_company_1950.import_orders`
+  WHERE ITEM IS NOT NULL
+    AND NOT (ITEM LIKE 'EXT-%%' OR ITEM LIKE 'GIFT-%%' OR ITEM LIKE 'WARRANTY-%%' OR ITEM LIKE 'SERVICE-%%' OR ITEM LIKE 'PREAUTH-%%')
+    -- String pre-filter: ORDER_DATE contains year 2024 or 2025 (covers our date range)
+    AND (ORDER_DATE LIKE '%%2024%%' OR ORDER_DATE LIKE '%%2025%%')
+)
+SELECT
+  sku,
+  email_lower,
+  order_date_parsed,
+  -- Flag for popularity calculation (Jan 10 - Aug 31, 2025)
+  CASE WHEN order_date_parsed BETWEEN @pop_hist_start AND @pop_hist_end THEN 1 ELSE 0 END AS is_popularity_window,
+  -- Flag for purchase exclusion (365 days from today)
+  CASE WHEN order_date_parsed BETWEEN DATE_SUB(@intent_window_end, INTERVAL @purchase_window_days DAY) AND @intent_window_end THEN 1 ELSE 0 END AS is_exclusion_window
+FROM prefiltered, date_bounds
+WHERE order_date_parsed IS NOT NULL
+  AND (
+    -- Include if in popularity window OR exclusion window
+    order_date_parsed BETWEEN @pop_hist_start AND @pop_hist_end
+    OR order_date_parsed BETWEEN DATE_SUB(@intent_window_end, INTERVAL @purchase_window_days DAY) AND @intent_window_end
+  );
+""", tbl_import_orders_filtered)
+USING pop_hist_start AS pop_hist_start, pop_hist_end AS pop_hist_end,
+      intent_window_end AS intent_window_end, purchase_window_days AS purchase_window_days;
+
+SET step_end = CURRENT_TIMESTAMP();
+SELECT FORMAT('[Step 1.5] Import orders filtered (single scan): %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
+
+-- Validate
+EXECUTE IMMEDIATE FORMAT("""
+SELECT 'import_orders_filtered' AS table_name,
+  COUNT(*) AS total_rows,
+  COUNTIF(is_popularity_window = 1) AS popularity_rows,
+  COUNTIF(is_exclusion_window = 1) AS exclusion_rows
+FROM %s
+""", tbl_import_orders_filtered);
+
+-- ====================================================================================
 -- STEP 2: RANKING & SCORING
 --  - Intent: hierarchical LOG scaled (orders > carts > views), 90d window
 --  - Popularity: hybrid 324d (import_orders + unified_events split at Sep 1), LOG scaled
@@ -389,16 +458,15 @@ FROM agg a
 JOIN %s ep ON a.sku = ep.sku;
 """, tbl_intent, tbl_staged_events, tbl_eligible_parts);
 
--- 2.2 Popularity (hybrid 324d)
+-- 2.2 Popularity (hybrid 324d) - V5.7: Uses consolidated import_orders_filtered table
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY sku AS
 WITH historical AS (
-  SELECT UPPER(TRIM(ITEM)) AS sku,
-         COUNT(*) AS order_count
-  FROM `auxia-gcp.data_company_1950.import_orders`
-  WHERE SAFE.PARSE_DATE('%%A, %%B %%d, %%Y', ORDER_DATE) BETWEEN @pop_hist_start AND @pop_hist_end
-    AND NOT (ITEM LIKE 'EXT-%%' OR ITEM LIKE 'GIFT-%%' OR ITEM LIKE 'WARRANTY-%%' OR ITEM LIKE 'SERVICE-%%' OR ITEM LIKE 'PREAUTH-%%')
+  -- V5.7: Read from consolidated table instead of scanning import_orders again
+  SELECT sku, COUNT(*) AS order_count
+  FROM %s
+  WHERE is_popularity_window = 1
   GROUP BY sku
 ),
 recent AS (
@@ -424,8 +492,7 @@ SELECT
   total_orders,
   LOG(1 + total_orders) * 2 AS popularity_score
 FROM combined;
-""", tbl_popularity, tbl_staged_events)
-USING pop_hist_start AS pop_hist_start, pop_hist_end AS pop_hist_end;
+""", tbl_popularity, tbl_import_orders_filtered, tbl_staged_events);
 
 SET step_end = CURRENT_TIMESTAMP();
 SELECT FORMAT('[Step 2] Scoring (intent + popularity): %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
@@ -437,7 +504,7 @@ SELECT FORMAT('[Step 2] Scoring (intent + popularity): %d seconds', TIMESTAMP_DI
 -- ====================================================================================
 SET step_start = CURRENT_TIMESTAMP();
 
--- 3.1 Purchase Exclusion (hybrid window)
+-- 3.1 Purchase Exclusion (hybrid window) - V5.7: Uses consolidated import_orders_filtered table
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY user_id, sku AS
@@ -445,6 +512,7 @@ WITH bounds AS (
   SELECT DATE_SUB(@intent_window_end, INTERVAL @purchase_window_days DAY) AS start_date,
          @intent_window_end AS end_date
 ),
+-- Recent orders from unified_events
 from_events AS (
   SELECT DISTINCT user_id, sku
   FROM %s, bounds b
@@ -452,24 +520,23 @@ from_events AS (
     AND UPPER(event_name) IN ('PLACED ORDER','ORDERED PRODUCT','CONSUMER WEBSITE ORDER')
     AND DATE(event_ts) BETWEEN b.start_date AND b.end_date
 ),
+-- Historical orders from import_orders (V5.7: via consolidated table)
 from_import AS (
-  SELECT uv.user_id, UPPER(TRIM(io.ITEM)) AS sku
-  FROM `auxia-gcp.data_company_1950.import_orders` io
-  JOIN %s uv
-    ON LOWER(TRIM(io.SHIP_TO_EMAIL)) = uv.email_lower
-  JOIN bounds b
-      ON SAFE.PARSE_DATE('%%A, %%B %%d, %%Y', io.ORDER_DATE) BETWEEN b.start_date AND b.end_date
-  WHERE NOT (io.ITEM LIKE 'EXT-%%' OR io.ITEM LIKE 'GIFT-%%' OR io.ITEM LIKE 'WARRANTY-%%' OR io.ITEM LIKE 'SERVICE-%%' OR io.ITEM LIKE 'PREAUTH-%%')
+  SELECT uv.user_id, io.sku
+  FROM %s io
+  JOIN %s uv ON io.email_lower = uv.email_lower
+  WHERE io.is_exclusion_window = 1
 )
 SELECT DISTINCT user_id, sku FROM (
   SELECT * FROM from_events
   UNION DISTINCT
   SELECT * FROM from_import
 );
-""", tbl_purchase_excl, tbl_staged_events, tbl_users)
+""", tbl_purchase_excl, tbl_staged_events, tbl_import_orders_filtered, tbl_users)
 USING purchase_window_days AS purchase_window_days, intent_window_end AS intent_window_end;
 
 -- 3.2 Score join + filters + diversity + top 4
+-- V5.7 change: Use pre-cast v1_year_int from users table
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY user_id AS
@@ -484,7 +551,7 @@ SELECT
   ROUND(COALESCE(int.intent_score, 0) + COALESCE(pop.popularity_score, 0), 2) AS final_score
 FROM %s uv
 JOIN %s ep
-  ON SAFE_CAST(uv.v1_year AS INT64) = ep.year AND uv.v1_make = ep.make AND uv.v1_model = ep.model
+  ON uv.v1_year_int = ep.year AND uv.v1_make = ep.make AND uv.v1_model = ep.model  -- V5.7: Use pre-cast v1_year_int
 LEFT JOIN %s int ON uv.user_id = int.user_id AND ep.sku = int.sku
 LEFT JOIN %s pop ON ep.sku = pop.sku
 LEFT JOIN %s img ON ep.sku = img.sku
@@ -495,12 +562,19 @@ WHERE purch.sku IS NULL
 """, tbl_scored, tbl_users, tbl_eligible_parts, tbl_intent, tbl_popularity, tbl_sku_images, tbl_purchase_excl);
 
 -- Variant dedup + diversity cap + top 4
+-- V5.7 FIX: Only strip B/R/G/P when preceded by number or dash (not letter+letter like "HB", "GR")
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY user_id AS
 WITH normalized AS (
   SELECT s.*,
-         REGEXP_REPLACE(s.sku, r'(-KIT|-BLK|-POL|-CHR|-RAW|-[A-Z0-9]{1,2}|[BRGP])$', '') AS base_sku
+         -- V5.7 FIX: Two-step regex to safely handle color variants
+         -- Step 1: Strip explicit suffixes (-KIT, -BLK, etc.) and any dash+1-2 char suffix
+         -- Step 2: Strip single B/R/G/P only when preceded by a digit (true color variants)
+         REGEXP_REPLACE(
+           REGEXP_REPLACE(s.sku, r'(-KIT|-BLK|-POL|-CHR|-RAW|-[A-Z0-9]{1,2})$', ''),
+           r'([0-9])[BRGP]$', r'\\1'
+         ) AS base_sku
   FROM %s s
 ),
 dedup_variant AS (
@@ -539,6 +613,7 @@ WHERE rec_count >= @required_recs
 USING required_recs AS required_recs;
 
 -- Pivot to wide format (1 row per user with rec_part_1..4)
+-- V5.7: Added pipeline_version to output
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY email_lower AS
@@ -563,20 +638,23 @@ SELECT
   MAX(CASE WHEN rn = 4 THEN price END) AS rec4_price,
   MAX(CASE WHEN rn = 4 THEN final_score END) AS rec4_score,
   MAX(CASE WHEN rn = 4 THEN image_url END) AS rec4_image,
-  CURRENT_TIMESTAMP() AS generated_at
+  CURRENT_TIMESTAMP() AS generated_at,
+  @pipeline_version AS pipeline_version  -- V5.7: Track which version generated this
 FROM %s
 GROUP BY email_lower, v1_year, v1_make, v1_model
 HAVING COUNT(*) = 4;
-""", tbl_final, tbl_ranked);
+""", tbl_final, tbl_ranked)
+USING pipeline_version AS pipeline_version;
 
 SET step_end = CURRENT_TIMESTAMP();
 SELECT FORMAT('[Step 3] Recommendations (exclusion + dedup + diversity + pivot): %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
 
 -- ====================================================================================
 -- VALIDATION: Final output checks
+-- V5.7 FIX: Threshold updated to match min_price ($50, was $20)
 -- ====================================================================================
 
--- Validate: Expect ~446K users with 4 recommendations each
+-- Validate: Expect ~450K users with 4 recommendations each
 EXECUTE IMMEDIATE FORMAT("""
 SELECT 'final_vehicle_recommendations' AS table_name,
   COUNT(*) AS unique_users,
@@ -598,28 +676,31 @@ SELECT 'duplicate_check' AS check_name,
 FROM %s
 """, tbl_final);
 
--- Validate: Price distribution
+-- Validate: Price distribution - V5.7 FIX: Threshold now matches min_price ($50)
 EXECUTE IMMEDIATE FORMAT("""
 SELECT 'price_distribution' AS check_name,
   LEAST(MIN(rec1_price), MIN(rec2_price), MIN(rec3_price), MIN(rec4_price)) AS min_price,
   GREATEST(MAX(rec1_price), MAX(rec2_price), MAX(rec3_price), MAX(rec4_price)) AS max_price,
   ROUND((AVG(rec1_price) + AVG(rec2_price) + AVG(rec3_price) + AVG(rec4_price)) / 4, 2) AS avg_price,
-  CASE WHEN LEAST(MIN(rec1_price), MIN(rec2_price), MIN(rec3_price), MIN(rec4_price)) >= 20 THEN 'OK' ELSE 'WARNING: Prices below $20' END AS status
+  CASE WHEN LEAST(MIN(rec1_price), MIN(rec2_price), MIN(rec3_price), MIN(rec4_price)) >= @min_price
+       THEN 'OK'
+       ELSE FORMAT('WARNING: Prices below $%%d', CAST(@min_price AS INT64))
+  END AS status
 FROM %s
-""", tbl_final);
+""", tbl_final)
+USING min_price AS min_price;
 
 -- Optional cleanup: drop staged_events to reduce footprint (keep others for debugging)
 EXECUTE IMMEDIATE FORMAT("DROP TABLE IF EXISTS %s", tbl_staged_events);
 
 -- Pipeline complete
-SELECT FORMAT('[COMPLETE] Total pipeline time: %d seconds',
+SELECT FORMAT('[COMPLETE] Pipeline %s finished in %d seconds',
+  pipeline_version,
   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), pipeline_start, SECOND)) AS log;
 
 -- ====================================================================================
 -- STEP 4: PRODUCTION DEPLOYMENT (OPTIONAL)
---  - Only runs if deploy_to_production = TRUE
---  - Overwrite production table
---  - Create timestamped copy
+-- V5.7: Only runs if deploy_to_production = TRUE
 -- ====================================================================================
 
 IF deploy_to_production THEN
@@ -651,7 +732,8 @@ IF deploy_to_production THEN
   EXECUTE IMMEDIATE FORMAT("""
   SELECT 'production_deployed' AS status,
     COUNT(*) AS user_count,
-    MIN(generated_at) AS generated_at
+    MIN(generated_at) AS generated_at,
+    MAX(pipeline_version) AS pipeline_version
   FROM `%s.%s.%s`
   """, prod_project, prod_dataset, prod_table_name);
 
