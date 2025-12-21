@@ -5,6 +5,65 @@
 
 ---
 
+## 2025-12-21 (Saturday)
+
+### Focus: V5.7 Production Deployment
+
+Deployed v5.7 pipeline with performance optimizations and critical variant dedup bug fix.
+
+#### V5.7 Changes
+
+| Type | Change |
+|------|--------|
+| **Bug Fix** | Variant dedup regex - only strip B/R/G/P when preceded by digit (was incorrectly collapsing 7,711 SKUs like `0-76650HB`) |
+| **Bug Fix** | QA validation threshold now uses `$50` min_price (was checking `$20`) |
+| **Perf** | Single import_orders scan (was scanned twice for popularity + exclusion) |
+| **Perf** | Pre-filter `ORDER_DATE LIKE '%2024%' OR '%2025%'` before PARSE_DATE |
+| **Perf** | Pre-cast `v1_year_int` in Step 0 for cleaner joins |
+| **Feature** | `deploy_to_production` flag (opt-in deployment) |
+| **Feature** | `pipeline_version` column in final output |
+
+#### V5.6 vs V5.7 Comparison
+
+| Metric | V5.6 | V5.7 |
+|--------|------|------|
+| Users | 456,957 | 456,825 |
+| Identical recs | - | 99.95% |
+| diff_rec3 | - | 28 |
+| diff_rec4 | - | 229 |
+| Users lost | - | 134 (correct - <4 products after dedup) |
+
+#### QA Results (All Passed)
+
+| Check | Result |
+|-------|--------|
+| Users | 456,825 (≥450K ✓) |
+| Price Range | $50 - $7,599.95 (≥$50 ✓) |
+| Avg Price | $388 |
+| Duplicates | 0 ✓ |
+| Refurbished | 0 ✓ |
+| Service SKUs | 0 ✓ |
+| HTTPS Images | 100% ✓ |
+| Score Ordering | 100% ✓ |
+| Diversity (max 2/PartType) | ✓ |
+
+#### Files Updated
+
+- `sql/recommendations/v5_7_vehicle_fitment_recommendations.sql` (new)
+- `sql/recommendations/v5_6_vehicle_fitment_recommendations.sql` (deploy flag)
+- `sql/validation/qa_checks.sql` (v5.7 dataset, $50 threshold)
+- `agent_docs/architecture.md` (price $50)
+- `agent_docs/bigquery.md` (v5.7 refs)
+- `docs/release_notes.md` (new)
+- `.claude/skills/run-pipeline/SKILL.md` (v5.7 refs)
+- `AGENTS.md` (v5.7 as production)
+
+**Commits:** `6c754d5`, `20ada06`, `278931f`
+
+**Production Table:** `auxia-reporting.company_1950_jp.final_vehicle_recommendations` (pipeline_version = v5.7)
+
+---
+
 ## 2025-12-18 (Wednesday)
 
 ### Focus: QA Follow-up & Doc Refresh
