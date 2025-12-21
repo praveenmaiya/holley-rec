@@ -128,13 +128,10 @@ WHERE sku.field_type = 'sku'
 
 ```bash
 # Dry run (validate + estimate cost)
-bq query --dry_run --use_legacy_sql=false < sql/recommendations/v5_6_pipeline.sql
+bq query --dry_run --use_legacy_sql=false < sql/recommendations/v5_7_vehicle_fitment_recommendations.sql
 
-# Run with output table
-bq query --use_legacy_sql=false \
-  --destination_table=auxia-reporting:temp_holley_v5_4.final_vehicle_recommendations \
-  --replace \
-  < sql/recommendations/v5_6_pipeline.sql
+# Run pipeline
+bq query --use_legacy_sql=false < sql/recommendations/v5_7_vehicle_fitment_recommendations.sql
 
 # Run validation checks
 bq query --use_legacy_sql=false < sql/validation/qa_checks.sql
@@ -146,7 +143,7 @@ bq query --use_legacy_sql=false < sql/validation/qa_checks.sql
 |---------|---------|---------|
 | `company_1950` | auxia-gcp | User attributes, events, treatment data |
 | `data_company_1950` | auxia-gcp | Catalog, fitment, orders |
-| `temp_holley_v5_4` | auxia-reporting | Output tables |
+| `temp_holley_v5_7` | auxia-reporting | Output tables |
 | `company_1950_jp` | auxia-reporting | Production recommendation tables |
 
 ### auxia-gcp.company_1950

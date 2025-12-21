@@ -1,12 +1,12 @@
 ---
 name: run-pipeline
-description: Execute the v5.6 vehicle fitment recommendation pipeline. Use when user asks to run the pipeline, refresh recommendations, or generate new recs.
+description: Execute the v5.7 vehicle fitment recommendation pipeline. Use when user asks to run the pipeline, refresh recommendations, or generate new recs.
 allowed-tools: Bash, Read, Glob
 ---
 
 # Run Pipeline Skill
 
-Execute the Holley v5.6 vehicle fitment recommendation pipeline.
+Execute the Holley v5.7 vehicle fitment recommendation pipeline.
 
 ## When to Use
 
@@ -30,13 +30,13 @@ Step 4: Production deployment + timestamped backup
 ### 1. Dry Run (Validate Syntax + Estimate Cost)
 
 ```bash
-bq query --dry_run --use_legacy_sql=false < sql/recommendations/v5_6_vehicle_fitment_recommendations.sql
+bq query --dry_run --use_legacy_sql=false < sql/recommendations/v5_7_vehicle_fitment_recommendations.sql
 ```
 
 ### 2. Execute Pipeline
 
 ```bash
-bq query --use_legacy_sql=false < sql/recommendations/v5_6_vehicle_fitment_recommendations.sql
+bq query --use_legacy_sql=false < sql/recommendations/v5_7_vehicle_fitment_recommendations.sql
 ```
 
 Expected runtime: ~5-7 minutes
@@ -67,7 +67,7 @@ FROM \`auxia-reporting.company_1950_jp.final_vehicle_recommendations\`
 
 ## Intermediate Tables
 
-Pipeline creates these tables in `auxia-reporting.temp_holley_v5_4`:
+Pipeline creates these tables in `auxia-reporting.temp_holley_v5_7`:
 
 | Table | Purpose |
 |-------|---------|
@@ -99,7 +99,7 @@ Pipeline creates these tables in `auxia-reporting.temp_holley_v5_4`:
 # Check users_with_v1_vehicles
 bq query --use_legacy_sql=false "
 SELECT COUNT(*) as users
-FROM \`auxia-reporting.temp_holley_v5_4.users_with_v1_vehicles\`
+FROM \`auxia-reporting.temp_holley_v5_7.users_with_v1_vehicles\`
 "
 ```
 
@@ -113,7 +113,7 @@ SELECT
   COUNTIF(price >= 50 AND price < 100) as p50_100,
   COUNTIF(price >= 100 AND price < 250) as p100_250,
   COUNTIF(price >= 250) as above_250
-FROM \`auxia-reporting.temp_holley_v5_4.eligible_parts\`
+FROM \`auxia-reporting.temp_holley_v5_7.eligible_parts\`
 "
 ```
 
@@ -142,7 +142,7 @@ After running the pipeline:
 
 ## Related Files
 
-- SQL: `sql/recommendations/v5_6_vehicle_fitment_recommendations.sql`
+- SQL: `sql/recommendations/v5_7_vehicle_fitment_recommendations.sql`
 - QA: `sql/validation/qa_checks.sql`
 - Stats: `docs/pipeline_run_stats.md`
 - Architecture: `agent_docs/architecture.md`
