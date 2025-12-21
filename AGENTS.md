@@ -5,7 +5,7 @@ Vehicle fitment recommendations for automotive parts using collaborative filteri
 ## Stack
 - Python 3.12+, uv, BigQuery (bq CLI), MLflow, W&B
 - Production: `auxia-reporting.company_1950_jp.final_vehicle_recommendations`
-- Working: `auxia-reporting.temp_holley_v5_4`
+- Working: `auxia-reporting.temp_holley_v5_7`
 
 ## Workflow: Plan → Code → Review
 
@@ -21,14 +21,14 @@ Vehicle fitment recommendations for automotive parts using collaborative filteri
 
 ### REVIEW
 1. Run `sql/validation/qa_checks.sql`
-2. Verify: 450K users, 0 duplicates, prices ≥$20
+2. Verify: 450K users, 0 duplicates, prices ≥$50
 3. Update docs if architecture changed
 
 ## Key Files
 
 | Path | Purpose |
 |------|---------|
-| `sql/recommendations/v5_6_*.sql` | Production pipeline |
+| `sql/recommendations/v5_7_*.sql` | Production pipeline |
 | `sql/validation/qa_checks.sql` | QA validation |
 | `agent_docs/architecture.md` | System design, scoring |
 | `agent_docs/bigquery.md` | Event schema, SQL gotchas |
@@ -49,10 +49,10 @@ Vehicle fitment recommendations for automotive parts using collaborative filteri
 ## Commands
 ```bash
 # Validate SQL
-bq query --dry_run --use_legacy_sql=false < sql/recommendations/v5_6_*.sql
+bq query --dry_run --use_legacy_sql=false < sql/recommendations/v5_7_*.sql
 
 # Run pipeline
-bq query --use_legacy_sql=false < sql/recommendations/v5_6_*.sql
+bq query --use_legacy_sql=false < sql/recommendations/v5_7_*.sql
 
 # Run QA checks
 bq query --use_legacy_sql=false < sql/validation/qa_checks.sql
@@ -92,7 +92,7 @@ make test && make lint
 - Always COALESCE(string_value, long_value) for event properties
 - Run qa_checks.sql after any pipeline change
 - Max 2 SKUs per PartType (diversity filter)
-- Variant dedup: Single-char color suffixes (B, R, G, P) are deduplicated
+- Variant dedup: B/R/G/P suffixes only stripped when preceded by digit (e.g., 140061B → 140061)
 - Sep 1, 2025 is fixed boundary between historical/recent data - don't change
 
 ## Docs (read before coding)
