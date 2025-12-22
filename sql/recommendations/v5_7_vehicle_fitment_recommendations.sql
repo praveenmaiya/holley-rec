@@ -7,7 +7,7 @@
 --   3. Added pre-filter before PARSE_DATE for better partition pruning
 --   4. Cast v1_year to INT64 once in Step 0 (was repeated in joins)
 --   5. Fixed QA validation threshold to match min_price ($50, was $20)
---   6. Added deploy_to_production flag (default FALSE for testing)
+--   6. Added deploy_to_production flag (default TRUE for production)
 --   7. Added pipeline_version to output table
 -- --------------------------------------------------------------------------------------------------
 -- Usage:
@@ -42,15 +42,15 @@ DECLARE intent_window_start DATE DEFAULT DATE '2025-09-01';  -- Fixed boundary
 DECLARE pop_hist_end     DATE DEFAULT DATE '2025-08-31';     -- Day before Sep 1
 DECLARE pop_hist_start   DATE DEFAULT DATE '2025-01-10';     -- ~233 days before Aug 31
 
--- Recent popularity: Aligns with intent (Sep 1 to today, unified_events)
-DECLARE pop_recent_start DATE DEFAULT intent_window_start;
-DECLARE pop_recent_end   DATE DEFAULT intent_window_end;
-
 DECLARE purchase_window_days INT64 DEFAULT 365;              -- suppression window
 DECLARE allow_price_fallback BOOL DEFAULT TRUE;              -- allow @min_price fallback when price missing
 DECLARE min_price FLOAT64 DEFAULT 50.0;
 DECLARE max_parttype_per_user INT64 DEFAULT 2;
 DECLARE required_recs INT64 DEFAULT 4;
+
+-- Dynamic year patterns for ORDER_DATE string pre-filter (avoids hardcoding 2024/2025)
+DECLARE current_year_pattern STRING DEFAULT CONCAT('%', CAST(EXTRACT(YEAR FROM CURRENT_DATE()) AS STRING), '%');
+DECLARE previous_year_pattern STRING DEFAULT CONCAT('%', CAST(EXTRACT(YEAR FROM DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)) AS STRING), '%');
 
 -- Convenience for dynamic table names
 DECLARE tbl_users STRING DEFAULT FORMAT('`%s.%s.users_with_v1_vehicles`', target_project, target_dataset);
@@ -391,8 +391,8 @@ prefiltered AS (
   FROM `auxia-gcp.data_company_1950.import_orders`
   WHERE ITEM IS NOT NULL
     AND NOT (ITEM LIKE 'EXT-%%' OR ITEM LIKE 'GIFT-%%' OR ITEM LIKE 'WARRANTY-%%' OR ITEM LIKE 'SERVICE-%%' OR ITEM LIKE 'PREAUTH-%%')
-    -- String pre-filter: ORDER_DATE contains year 2024 or 2025 (covers our date range)
-    AND (ORDER_DATE LIKE '%%2024%%' OR ORDER_DATE LIKE '%%2025%%')
+    -- String pre-filter: ORDER_DATE contains current or previous year (dynamic, avoids hardcoding)
+    AND (ORDER_DATE LIKE @current_year_pattern OR ORDER_DATE LIKE @previous_year_pattern)
 )
 SELECT
   sku,
@@ -411,7 +411,8 @@ WHERE order_date_parsed IS NOT NULL
   );
 """, tbl_import_orders_filtered)
 USING pop_hist_start AS pop_hist_start, pop_hist_end AS pop_hist_end,
-      intent_window_end AS intent_window_end, purchase_window_days AS purchase_window_days;
+      intent_window_end AS intent_window_end, purchase_window_days AS purchase_window_days,
+      current_year_pattern AS current_year_pattern, previous_year_pattern AS previous_year_pattern;
 
 SET step_end = CURRENT_TIMESTAMP();
 SELECT FORMAT('[Step 1.5] Import orders filtered (single scan): %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
@@ -485,7 +486,7 @@ SELECT
     ELSE 0
   END AS intent_score
 FROM agg a
-JOIN %s ep ON a.sku = ep.sku;
+WHERE EXISTS (SELECT 1 FROM %s ep WHERE a.sku = ep.sku);  -- V5.7.1: EXISTS avoids row multiplication
 """, tbl_intent, tbl_staged_events, tbl_eligible_parts);
 
 -- -----------------------------------------------------------------------------------
