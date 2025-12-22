@@ -75,7 +75,10 @@ DECLARE pipeline_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP();
 
 -- ====================================================================================
 -- STEP 0: USERS WITH V1 VEHICLES
--- V5.7 change: Cast v1_year to INT64 here (was repeated in joins)
+-- -----------------------------------------------------------------------------------
+-- WHAT: Build audience of users who have email + registered vehicle (year/make/model)
+-- HOW:  Pivot user_properties array, filter to users with all 4 required fields
+-- ALGO: MAX(IF(property=X)) pivot pattern; pre-cast year to INT64 for join efficiency
 -- ====================================================================================
 SET step_start = CURRENT_TIMESTAMP();
 
@@ -114,9 +117,11 @@ FROM %s
 """, tbl_users);
 
 -- ====================================================================================
--- STEP 1: VEHICLE FITMENT PIPELINE (ELIGIBILITY)
---  - Stage events once (intent + price + image extraction)
---  - Price >= $50, HTTPS image, refurb/service filters, vehicle fitment, min 4 per generation
+-- STEP 1: STAGED EVENTS (Single Scan)
+-- -----------------------------------------------------------------------------------
+-- WHAT: Extract SKU, price, image from behavioral events (views, carts, orders)
+-- HOW:  Single scan of unified_events with regex to handle varied property formats
+-- ALGO: CASE+REGEXP matches ProductId/Items_n.ProductId/SKUs_n; index-match prices
 -- ====================================================================================
 SET step_start = CURRENT_TIMESTAMP();
 
@@ -211,7 +216,10 @@ SELECT 'staged_events' AS table_name, COUNT(*) AS row_count,
 FROM %s
 """, tbl_staged_events);
 
--- 1.1 SKU Prices
+-- -----------------------------------------------------------------------------------
+-- STEP 1.1: SKU PRICES
+-- WHAT: Get max observed price per SKU | HOW: GROUP BY sku, MAX(price)
+-- -----------------------------------------------------------------------------------
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY sku AS
@@ -221,7 +229,10 @@ WHERE sku IS NOT NULL
 GROUP BY sku;
 """, tbl_sku_prices, tbl_staged_events);
 
--- 1.2 SKU Images (HTTPS normalized)
+-- -----------------------------------------------------------------------------------
+-- STEP 1.2: SKU IMAGES
+-- WHAT: Get most recent HTTPS image per SKU | HOW: ROW_NUMBER by recency, normalize URLs
+-- -----------------------------------------------------------------------------------
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY sku AS
@@ -244,7 +255,13 @@ FROM (
 WHERE rn = 1 AND image_url LIKE 'https://%%';
 """, tbl_sku_images, tbl_staged_events);
 
--- 1.3 Eligible Parts (apply filters; fitment join; refurb + service prefixes + price + image)
+-- -----------------------------------------------------------------------------------
+-- STEP 1.3: ELIGIBLE PARTS
+-- WHAT: Filter fitment catalog to recommendable products
+-- HOW:  Join fitment→catalog→prices→images; exclude refurb/service/commodity/low-price
+-- ALGO: 7 filters: price≥$50, HTTPS image, !refurbished, !service SKU, !commodity PartType,
+--       !UNKNOWN<$3K, vehicle must have ≥4 eligible parts
+-- -----------------------------------------------------------------------------------
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY make, model, year, sku AS
@@ -325,7 +342,10 @@ SELECT 'eligible_parts' AS table_name, COUNT(*) AS row_count,
 FROM %s
 """, tbl_eligible_parts);
 
--- 1.4 Vehicle Generation Fitment table (for reporting)
+-- -----------------------------------------------------------------------------------
+-- STEP 1.4: VEHICLE GENERATION FITMENT (Reporting)
+-- WHAT: Aggregate eligible SKUs per vehicle | HOW: GROUP BY year/make/model, ARRAY_AGG
+-- -----------------------------------------------------------------------------------
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY make, model AS
@@ -341,9 +361,11 @@ GROUP BY year, make, model;
 """, tbl_vehicle_generation, tbl_eligible_parts);
 
 -- ====================================================================================
--- STEP 1.5: CONSOLIDATED IMPORT_ORDERS SCAN (V5.7 NEW)
--- V5.7 change: Scan import_orders ONCE instead of twice (popularity + purchase exclusion)
--- Also adds string pre-filter for better partition pruning before PARSE_DATE
+-- STEP 1.5: IMPORT ORDERS (Consolidated Scan) [V5.7 NEW]
+-- -----------------------------------------------------------------------------------
+-- WHAT: Pre-filter historical orders for popularity + purchase exclusion (single scan)
+-- HOW:  String pre-filter (LIKE '%2024%') before PARSE_DATE; flag rows by window
+-- ALGO: is_popularity_window (Jan-Aug 2025), is_exclusion_window (365d rolling)
 -- ====================================================================================
 SET step_start = CURRENT_TIMESTAMP();
 
@@ -404,13 +426,21 @@ FROM %s
 """, tbl_import_orders_filtered);
 
 -- ====================================================================================
--- STEP 2: RANKING & SCORING
---  - Intent: hierarchical LOG scaled (orders > carts > views), 90d window
---  - Popularity: hybrid 324d (import_orders + unified_events split at Sep 1), LOG scaled
+-- STEP 2: SCORING (Intent + Popularity)
+-- -----------------------------------------------------------------------------------
+-- WHAT: Calculate per-SKU scores from user behavior + global popularity
+-- HOW:  Intent from staged_events (Sep 1+), Popularity from import_orders + events
+-- ALGO: final_score = intent_score + popularity_score
+--       Intent:     LOG(1+count) × weight [orders×20, carts×10, views×2]
+--       Popularity: LOG(1+total_orders) × 2
 -- ====================================================================================
 SET step_start = CURRENT_TIMESTAMP();
 
--- 2.1 Intent (dedup strongest per user/sku)
+-- -----------------------------------------------------------------------------------
+-- STEP 2.1: INTENT SCORES
+-- WHAT: Score user×SKU pairs by behavioral intent | HOW: Hierarchical (order>cart>view)
+-- ALGO: LOG(1+count)×20 for orders, ×10 for carts, ×2 for views; keep strongest signal
+-- -----------------------------------------------------------------------------------
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY user_id, sku AS
@@ -458,7 +488,11 @@ FROM agg a
 JOIN %s ep ON a.sku = ep.sku;
 """, tbl_intent, tbl_staged_events, tbl_eligible_parts);
 
--- 2.2 Popularity (hybrid 324d) - V5.7: Uses consolidated import_orders_filtered table
+-- -----------------------------------------------------------------------------------
+-- STEP 2.2: POPULARITY SCORES
+-- WHAT: Global SKU popularity from 324-day order history | HOW: Hybrid import+events
+-- ALGO: LOG(1+total_orders)×2; combines Jan-Aug (import_orders) + Sep+ (unified_events)
+-- -----------------------------------------------------------------------------------
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY sku AS
@@ -498,13 +532,20 @@ SET step_end = CURRENT_TIMESTAMP();
 SELECT FORMAT('[Step 2] Scoring (intent + popularity): %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
 
 -- ====================================================================================
--- STEP 3: USER RECOMMENDATIONS (filters after scoring)
---  - Purchase exclusion (365d hybrid)
---  - Variant dedup, diversity, top 4
+-- STEP 3: USER RECOMMENDATIONS
+-- -----------------------------------------------------------------------------------
+-- WHAT: Generate final 4 recommendations per user with all filters applied
+-- HOW:  Join scores → exclude purchases → dedup variants → diversity cap → top 4
+-- ALGO: 1) Exclude 365d purchases, 2) Dedup color variants (140061B→140061),
+--       3) Max 2 per PartType, 4) Top 4 by final_score, 5) Pivot to wide format
 -- ====================================================================================
 SET step_start = CURRENT_TIMESTAMP();
 
--- 3.1 Purchase Exclusion (hybrid window) - V5.7: Uses consolidated import_orders_filtered table
+-- -----------------------------------------------------------------------------------
+-- STEP 3.1: PURCHASE EXCLUSION
+-- WHAT: Suppress SKUs user already purchased in last 365 days
+-- HOW:  Union recent orders (events) + historical orders (import_orders via email)
+-- -----------------------------------------------------------------------------------
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY user_id, sku AS
@@ -535,8 +576,11 @@ SELECT DISTINCT user_id, sku FROM (
 """, tbl_purchase_excl, tbl_staged_events, tbl_import_orders_filtered, tbl_users)
 USING purchase_window_days AS purchase_window_days, intent_window_end AS intent_window_end;
 
--- 3.2 Score join + filters + diversity + top 4
--- V5.7 change: Use pre-cast v1_year_int from users table
+-- -----------------------------------------------------------------------------------
+-- STEP 3.2: SCORED RECOMMENDATIONS
+-- WHAT: Join user→vehicle→eligible_parts→scores, exclude purchased
+-- HOW:  Multi-table join on vehicle YMM + LEFT JOINs for scores; WHERE NOT purchased
+-- -----------------------------------------------------------------------------------
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY user_id AS
@@ -561,8 +605,12 @@ WHERE purch.sku IS NULL
   AND img.image_url IS NOT NULL;
 """, tbl_scored, tbl_users, tbl_eligible_parts, tbl_intent, tbl_popularity, tbl_sku_images, tbl_purchase_excl);
 
--- Variant dedup + diversity cap + top 4
--- V5.7 FIX: Only strip B/R/G/P when preceded by number or dash (not letter+letter like "HB", "GR")
+-- -----------------------------------------------------------------------------------
+-- STEP 3.3: VARIANT DEDUP + DIVERSITY
+-- WHAT: Remove color variants, limit PartType diversity
+-- HOW:  Regex strips B/R/G/P suffix when preceded by digit; ROW_NUMBER per PartType
+-- ALGO: base_sku = strip(-KIT,-BLK,etc) then strip digit+[BRGP]; max 2 per PartType
+-- -----------------------------------------------------------------------------------
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY user_id AS
@@ -596,7 +644,11 @@ WHERE rn_parttype <= @max_parttype_per_user;
 """, tbl_diversity, tbl_scored)
 USING max_parttype_per_user AS max_parttype_per_user;
 
--- Rank top 4 per user (filter to users with at least required_recs)
+-- -----------------------------------------------------------------------------------
+-- STEP 3.4: TOP 4 SELECTION
+-- WHAT: Select top 4 recommendations per user | HOW: ROW_NUMBER by score DESC
+-- ALGO: Only include users with ≥4 candidates (ensures full recommendation set)
+-- -----------------------------------------------------------------------------------
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY user_id AS
@@ -612,8 +664,11 @@ WHERE rec_count >= @required_recs
 """, tbl_ranked, tbl_diversity)
 USING required_recs AS required_recs;
 
--- Pivot to wide format (1 row per user with rec_part_1..4)
--- V5.7: Added pipeline_version to output
+-- -----------------------------------------------------------------------------------
+-- STEP 3.5: PIVOT TO WIDE FORMAT
+-- WHAT: Transform rows to columns (1 row per user with rec_part_1..4)
+-- HOW:  MAX(CASE WHEN rn=N) pivot pattern; add generated_at + pipeline_version
+-- -----------------------------------------------------------------------------------
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY email_lower AS
@@ -650,8 +705,10 @@ SET step_end = CURRENT_TIMESTAMP();
 SELECT FORMAT('[Step 3] Recommendations (exclusion + dedup + diversity + pivot): %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
 
 -- ====================================================================================
--- VALIDATION: Final output checks
--- V5.7 FIX: Threshold updated to match min_price ($50, was $20)
+-- VALIDATION: Final Output Checks
+-- -----------------------------------------------------------------------------------
+-- WHAT: Verify output quality (user count, duplicates, price range)
+-- HOW:  COUNT, COUNTIF assertions with pass/fail status
 -- ====================================================================================
 
 -- Validate: Expect ~450K users with 4 recommendations each
@@ -699,8 +756,10 @@ SELECT FORMAT('[COMPLETE] Pipeline %s finished in %d seconds',
   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), pipeline_start, SECOND)) AS log;
 
 -- ====================================================================================
--- STEP 4: PRODUCTION DEPLOYMENT (OPTIONAL)
--- V5.7: Only runs if deploy_to_production = TRUE
+-- STEP 4: PRODUCTION DEPLOYMENT (Optional)
+-- -----------------------------------------------------------------------------------
+-- WHAT: Copy final table to production + create dated backup
+-- HOW:  CREATE OR REPLACE TABLE COPY; guarded by deploy_to_production flag
 -- ====================================================================================
 
 IF deploy_to_production THEN
