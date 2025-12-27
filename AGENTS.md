@@ -140,13 +140,20 @@ make test && make lint
 | "Compare pipeline versions" | General-purpose | Multiple queries needed |
 
 ## Skills Available
+
+### Single-Step Skills
 - `/analyze-ctr` - Thompson Sampling CTR analysis
 - `/uplift` - Personalized vs Static comparison (MECE)
 - `/validate` - QA checks with pass/fail parsing
 - `/debug-sql` - SQL error diagnosis
 - `/compare-versions` - Pipeline version diff
-- `/deploy` - Deploy staging to production (dry-run → QA → confirm → deploy)
+- `/deploy` - Deploy staging to production
 - `/run-pipeline` - Execute v5.7 pipeline
+- `/status` - Quick health check (prod vs staging, CTR, git status)
+
+### Workflow Skills (Multi-Step Automation)
+- `/new-version` - Create new pipeline version end-to-end (spec → implement → test → validate → compare)
+- `/full-deploy` - Complete deployment flow (run → validate → compare → confirm → deploy → verify)
 
 ## Hooks & Guardrails
 
