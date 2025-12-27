@@ -95,6 +95,72 @@ make test && make lint
 - Variant dedup: B/R/G/P suffixes only stripped when preceded by digit (e.g., 140061B → 140061)
 - Sep 1, 2025 is fixed boundary between historical/recent data - don't change
 
+## Common Failures & Fixes
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| "Duplicate SKUs in output" | Missing variant dedup | Check regex: `[0-9][BRGP]$` |
+| "Price below $50" | Wrong threshold in sku_prices | Verify WHERE clause |
+| "Missing HTTPS" | Protocol-relative URL | REPLACE `//cdn` with `https://cdn` |
+| "Column ProductId not found" | Case sensitivity | Cart=ProductId, Order=ProductID |
+| "Bytes billing exceeded" | Missing partition filter | Add DATE filter early in query |
+| "Division by zero" | Missing SAFE_DIVIDE | Use SAFE_DIVIDE() or NULLIF |
+| "No matching signature" | Type mismatch | Check COALESCE(string_value, CAST(long_value AS STRING)) |
+
+## Analysis Methodology
+
+### CTR Analysis
+- Use `src/bandit_click_holley.py` for Thompson Sampling
+- Always use DISTINCT for click/view counts (prevents multi-click inflation)
+- 60-day window is standard for treatment analysis
+- Reference: `docs/model_ctr_comparison_2025_12_17.md`
+
+### Uplift Analysis
+- Use MECE framework: only compare eligible users (with vehicle data)
+- Within-user comparison is gold standard (same user, both treatments)
+- Reference: `docs/treatment_ctr_unbiased_analysis_2025_12_17.md`
+
+### Key Metrics
+| Metric | Formula | Notes |
+|--------|---------|-------|
+| Open Rate | opens / sent | Delivery-adjusted |
+| CTR (of opens) | clicks / opens | Standard email metric |
+| CTR (of sent) | clicks / sent | Overall effectiveness |
+| Conversion Rate | orders / clicks | Purchase intent |
+
+## When to Spawn Subagents
+
+| Task | Agent Type | Why |
+|------|------------|-----|
+| "Explore the codebase" | Explore | Fast, focused search |
+| "Plan the implementation" | Plan | Architecture decisions |
+| "Find where X happens" | Explore | Pattern matching |
+| "Debug this SQL error" | General-purpose | Needs full context |
+| "Analyze CTR data" | General-purpose | Multi-step analysis |
+| "Compare pipeline versions" | General-purpose | Multiple queries needed |
+
+## Skills Available
+- `/analyze-ctr` - Thompson Sampling CTR analysis
+- `/uplift` - Personalized vs Static comparison (MECE)
+- `/validate` - QA checks with pass/fail parsing
+- `/debug-sql` - SQL error diagnosis
+- `/compare-versions` - Pipeline version diff
+- `/deploy` - Deploy staging to production (dry-run → QA → confirm → deploy)
+- `/run-pipeline` - Execute v5.7 pipeline
+
+## Hooks & Guardrails
+
+Automatic validation configured in `.claude/settings.json`:
+
+| Hook | Trigger | Action |
+|------|---------|--------|
+| SQL Validation | Edit/Write `sql/recommendations/*.sql` | Auto dry-run validation (blocks on error) |
+| Force Push Block | `git push --force` | Block with warning |
+
+Hooks receive JSON via stdin and use `jq` to parse. Exit code 2 blocks the operation.
+
+**Note:** Restart Claude Code if hooks don't trigger after config changes.
+
 ## Docs (read before coding)
 - `@agent_docs/architecture.md` - Pipeline, scoring formula
 - `@agent_docs/bigquery.md` - Event bugs, SQL patterns

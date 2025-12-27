@@ -8,5 +8,29 @@
       "Bash(ruff:*)",
       "Bash(mypy:*)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "file_path=$(jq -r '.tool_input.file_path // empty' 2>/dev/null); if [[ \"$file_path\" == *sql/recommendations/*.sql ]]; then echo '🔍 Validating SQL syntax...' && bq query --dry_run --use_legacy_sql=false < \"$file_path\" 2>&1 | head -3 && echo '✅ SQL syntax valid' || (echo '❌ SQL syntax error'; exit 2); fi"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd=$(jq -r '.tool_input.command // empty' 2>/dev/null); if [[ \"$cmd\" == *'--force'* ]] && [[ \"$cmd\" == *'push'* ]]; then echo '⚠️ BLOCKED: Force push detected. Use regular push instead.' && exit 1; fi"
+          }
+        ]
+      }
+    ]
   }
 }
