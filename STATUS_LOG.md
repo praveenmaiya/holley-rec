@@ -5,6 +5,44 @@
 
 ---
 
+## 2025-12-29 (Sunday)
+
+### Focus: Agent Infrastructure & Analysis
+
+#### Hooks & Guardrails
+- Added PostToolUse hook for SQL validation (auto dry-run on `sql/recommendations/*.sql`)
+- Added PreToolUse hook to block force push commands
+- Hook format: uses `jq` to parse JSON from stdin, exit code 2 blocks operation
+
+#### New Skills (Workflow Automation)
+| Skill | Purpose |
+|-------|---------|
+| `/deploy` | Deploy staging to production (dry-run → QA → confirm → deploy) |
+| `/new-version` | End-to-end pipeline version lifecycle |
+| `/full-deploy` | Complete deployment flow |
+| `/status` | Quick health check (prod vs staging, CTR, git status) |
+
+#### Apparel vs Vehicle Parts Analysis
+Addressed Sumeet's concern about apparel recommendations outperforming vehicle parts.
+
+| Category | Orders | Revenue |
+|----------|--------|---------|
+| Vehicle Parts | 96% (218,894) | 98% ($43.8M) |
+| Apparel/Safety | 4% (9,367) | 2% ($801K) |
+
+**Conclusion**: Vehicle-centric recommendation approach is correctly aligned. No change needed.
+
+#### Files Changed
+- `.claude/settings.json` - hooks config
+- `.claude/skills/deploy/SKILL.md` - new
+- `.claude/skills/new-version/SKILL.md` - new
+- `.claude/skills/full-deploy/SKILL.md` - new
+- `.claude/skills/status/SKILL.md` - new
+- `AGENTS.md` - updated with skills & hooks docs
+- `docs/apparel_vs_vehicle_parts_analysis_2025_12_27.md` - new
+
+---
+
 ## 2025-12-21 (Saturday)
 
 ### Focus: V5.7 Production Deployment
