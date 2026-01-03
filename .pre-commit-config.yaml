@@ -1,0 +1,38 @@
+# Pre-commit hooks configuration
+# Install: uv run pre-commit install
+# Run manually: uv run pre-commit run --all-files
+
+repos:
+  # Ruff - Fast Python linter and formatter
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # General file hygiene
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: \.md$
+      - id: end-of-file-fixer
+        exclude: \.md$
+      - id: check-yaml
+        args: [--unsafe]
+      - id: check-json
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  # SQL formatting check (informational only)
+  - repo: local
+    hooks:
+      - id: sql-syntax-check
+        name: SQL Syntax Check (dry run)
+        entry: bash -c 'for f in "$@"; do echo "Checking $f..." && bq query --dry_run --use_legacy_sql=false < "$f" > /dev/null 2>&1 || echo "Warning: $f may have syntax issues"; done'
+        language: system
+        files: ^sql/recommendations/.*\.sql$
+        pass_filenames: true

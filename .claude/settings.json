@@ -17,6 +17,10 @@
           {
             "type": "command",
             "command": "file_path=$(jq -r '.tool_input.file_path // empty' 2>/dev/null); if [[ \"$file_path\" == *sql/recommendations/*.sql ]]; then echo '🔍 Validating SQL syntax...' && bq query --dry_run --use_legacy_sql=false < \"$file_path\" 2>&1 | head -3 && echo '✅ SQL syntax valid' || (echo '❌ SQL syntax error'; exit 2); fi"
+          },
+          {
+            "type": "command",
+            "command": "file_path=$(jq -r '.tool_input.file_path // empty' 2>/dev/null); if [[ \"$file_path\" == *.py ]]; then echo '🔧 Formatting Python...' && ruff format \"$file_path\" 2>&1 && ruff check --fix \"$file_path\" 2>&1 | head -5 && echo '✅ Python formatted'; fi"
           }
         ]
       }

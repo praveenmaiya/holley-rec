@@ -1,0 +1,181 @@
+# Claude Code Tips from Boris Cherny
+
+Boris Cherny (@bcherny) is the creator of Claude Code (started as a side project in Sept 2024).
+He landed **259 PRs in 30 days** - every line written by Claude Code + Opus 4.5.
+
+Last updated: 2026-01-02
+
+---
+
+## The Official 13 Tips (From Twitter Thread)
+
+Source: https://x.com/bcherny/status/2007179858435281082
+
+### 1. Run 5 Claudes in Parallel (Terminal)
+Number your terminal tabs 1-5, use system notifications to know when a Claude needs input.
+- Docs: https://code.claude.com/docs/en/terminal-config#iterm-2-system-notifications
+
+### 2. Run 5-10 Claudes on claude.ai/code + Mobile
+Run parallel sessions on web alongside local Claudes:
+- Hand off local sessions to web using `&`
+- Use `--teleport` to move back and forth
+- Start sessions from Claude iOS app and check in later
+
+### 3. Use Opus 4.5 with Thinking for Everything
+> "It's the best coding model I've ever used, and even though it's bigger & slower than Sonnet, since you have to steer it less and it's better at tool use, it is almost always faster than using a smaller model in the end."
+
+### 4. Team Shares Single CLAUDE.md
+- Check into git, whole team contributes
+- **Key principle**: Anytime you see Claude do something incorrectly, add it to CLAUDE.md so Claude knows not to do it next time
+- Each team maintains their own CLAUDE.md
+
+### 5. Tag @.claude on PRs via GitHub Action
+During code review, tag `@.claude` on coworkers' PRs to add something to CLAUDE.md as part of the PR.
+- Use `/install-github-action` to set up
+- This is "Compounding Engineering" - the codebase gets smarter over time
+
+### 6. Most Sessions Start in Plan Mode
+- `Shift+Tab` twice to enter Plan Mode
+- Go back and forth with Claude until you like its plan
+- Then switch to auto-accept edits mode
+- **"A good plan is really important!"**
+
+### 7. Slash Commands for Every Inner Loop Workflow
+Use slash commands for workflows you do many times a day:
+- Saves from repeated prompting
+- Claude can use these workflows too
+- Commands live in `.claude/commands/` and are checked into git
+- Example: `/commit-push-pr` with inline bash to pre-compute git status
+
+### 8. Subagents for Common Workflows
+Regular subagents Boris uses:
+- `code-simplifier` - simplifies code after Claude is done
+- `verify-app` - detailed instructions for testing end-to-end
+- Think of subagents as automating the most common workflows for most PRs
+
+### 9. PostToolUse Hook to Format Code
+- Claude usually generates well-formatted code out of the box
+- Hook handles the last 10% to avoid formatting errors in CI later
+
+### 10. Use /permissions Instead of --dangerously-skip-permissions
+- Use `/permissions` to pre-allow common bash commands you know are safe
+- Most are checked into `.claude/settings.json` and shared with team
+
+### 11. Claude Uses All Your Tools (MCP)
+Claude Code uses all Boris's tools:
+- Searches and posts to Slack (via MCP server)
+- Runs BigQuery queries (bq CLI)
+- Grabs error logs from Sentry
+- MCP configuration checked into `.mcp.json` and shared with team
+
+### 12. Long-Running Tasks: Background Agents + Stop Hooks
+For very long-running tasks:
+- (a) Prompt Claude to verify its work with a background agent when done
+- (b) Use an agent Stop hook to do that more deterministically
+- (c) Use the `ralph-wiggum` plugin to keep Claude going
+- Use `--permission-mode=dontAsk` or `--dangerously-skip-permissions` in sandbox
+
+### 13. Give Claude a Way to Verify Its Work (MOST IMPORTANT)
+> "Probably the most important thing to get great results out of Claude Code - give Claude a way to verify its work. If Claude has that feedback loop, it will 2-3x the quality of the final result."
+
+Verification looks different for each domain:
+- Running bash commands
+- Running test suite
+- Testing app in browser (Claude Chrome extension)
+- Testing in phone simulator
+- **Make sure to invest in making this rock-solid**
+
+---
+
+## Effective Workflows
+
+### Explore-Plan-Code-Commit
+1. Have Claude read files first
+2. Create a plan (use "think" or "ultrathink" for extended thinking)
+3. Implement
+4. Commit
+
+### Test-Driven Development
+1. Write tests first
+2. Verify they fail
+3. Have Claude implement code to pass them
+
+### Visual Iteration
+1. Provide screenshots or design mocks
+2. Have Claude iterate until results match
+
+---
+
+## Quick Commands
+
+| Command | Purpose |
+|---------|---------|
+| `Esc Esc` | Rewind to checkpoints |
+| `Shift+Tab` x2 | Enter Plan Mode |
+| `Ctrl+S` | Stash prompts temporarily |
+| `/clear` | Reset context (use frequently in long sessions) |
+| `#message` | Save to permanent memory |
+| `@file` | Add file to context |
+| `!command` | Execute bash instantly |
+
+---
+
+## Extended Thinking Keywords
+
+| Keyword | Tokens | Use Case |
+|---------|--------|----------|
+| `think` | Default | Normal reasoning |
+| `think hard` | More | Complex problems |
+| `ultrathink` | 31,999 | Deep analysis |
+
+---
+
+## What We Use in This Repo
+
+### Implemented (matches Boris's tips)
+
+| Tip # | Feature | Our Implementation |
+|-------|---------|-------------------|
+| 3 | Opus 4.5 | Using Opus 4.5 with thinking |
+| 4 | CLAUDE.md | Strong CLAUDE.md with patterns, gotchas |
+| 6 | Plan Mode | Plan -> Code -> Review workflow, `/plan` command |
+| 7 | Slash Commands | `/commit`, `/plan`, `/implement`, `/review`, `/eval` |
+| 9 | Format Hook | PostToolUse hook for Python (ruff) + SQL validation |
+| 10 | /permissions | `.claude/settings.json` with allow list (bq, make, pytest, ruff, mypy) |
+| 11 | Tool Integration | BigQuery via `bq` CLI |
+| 13 | Verification | Auto-verification in `/run-pipeline`, `/validate` skill |
+
+### Partially Implemented
+
+| Tip # | Feature | Status | Gap |
+|-------|---------|--------|-----|
+| 4 | CLAUDE.md | Partial | Need to consolidate 9+ gotchas from agent_docs |
+| 8 | Subagents | Partial | Have 14 skills, no `code-simplifier` or `verify-app` |
+| 11 | MCP | Partial | No Slack MCP, no `.mcp.json` |
+
+### Not Implemented Yet
+
+| Tip # | Feature | Priority | Notes |
+|-------|---------|----------|-------|
+| 1 | 5 Parallel Terminals | Low | User workflow preference |
+| 2 | claude.ai/code + Mobile | Low | User workflow preference |
+| 5 | GitHub Action @.claude | HIGH | `/install-github-action` needed |
+| 12 | Stop Hooks | Medium | ralph-wiggum plugin for long runs |
+
+### To Explore
+- [ ] Install Claude Code GitHub Action (`/install-github-action`)
+- [ ] Stop hooks + ralph-wiggum plugin for pipeline runs
+- [ ] `code-simplifier` subagent for post-coding cleanup
+- [ ] `verify-app` subagent for end-to-end testing
+- [ ] Git worktrees for parallel Claude instances
+- [ ] Slack MCP server if needed
+
+---
+
+## Sources
+
+- [Claude Code: Best practices for agentic coding - Anthropic](https://www.anthropic.com/engineering/claude-code-best-practices)
+- [Boris Cherny on X](https://x.com/bcherny)
+- [Boris Cherny Creator Interview](https://www.developing.dev/p/boris-cherny-creator-of-claude-code)
+- [How to Use Claude Code Like the People Who Built It](https://every.to/podcast/how-to-use-claude-code-like-the-people-who-built-it)
+- [Ultimate Claude Code Tips (Advent of Claude 2025)](https://dev.to/damogallagher/the-ultimate-claude-code-tips-collection-advent-of-claude-2025-5b73)

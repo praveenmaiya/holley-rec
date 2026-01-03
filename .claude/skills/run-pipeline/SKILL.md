@@ -130,6 +130,66 @@ LIMIT 10
 "
 ```
 
+## Auto-Verification (REQUIRED)
+
+**IMPORTANT**: After every pipeline execution, AUTOMATICALLY run these validation checks before reporting success:
+
+### Step 1: Quick Stats Check
+```bash
+bq query --use_legacy_sql=false "
+SELECT
+  COUNT(*) as users,
+  ROUND(MIN(LEAST(rec1_price, rec2_price, rec3_price, rec4_price)), 2) as min_price,
+  ROUND(MAX(GREATEST(rec1_price, rec2_price, rec3_price, rec4_price)), 2) as max_price,
+  COUNTIF(rec1_image NOT LIKE 'https://%') as non_https_images,
+  pipeline_version
+FROM \`auxia-reporting.company_1950_jp.final_vehicle_recommendations\`
+GROUP BY pipeline_version
+"
+```
+
+### Step 2: Duplicate Check
+```bash
+bq query --use_legacy_sql=false "
+SELECT COUNT(*) as duplicate_users
+FROM (
+  SELECT email_lower
+  FROM \`auxia-reporting.company_1950_jp.final_vehicle_recommendations\`
+  GROUP BY email_lower
+  HAVING COUNT(*) > 1
+)
+"
+```
+
+### Step 3: Interpret Results
+
+| Check | Pass Criteria | If Failed |
+|-------|---------------|-----------|
+| Users | ≥450,000 | STOP - investigate user attributes |
+| Min Price | ≥$50 | STOP - check price filter |
+| Max Price | ≤$10,000 | WARN - review outliers |
+| Non-HTTPS | 0 | STOP - fix image URLs |
+| Duplicates | 0 | STOP - check dedup logic |
+
+### Step 4: Report Status
+
+After verification, report:
+```
+✅ Pipeline run successful
+- Users: XXX,XXX
+- Price range: $XX - $X,XXX
+- HTTPS: 100%
+- Duplicates: 0
+- Version: vX.X
+```
+
+Or if failed:
+```
+❌ Pipeline run FAILED validation
+- Issue: <specific failure>
+- Action: <recommended fix>
+```
+
 ## Post-Run Checklist
 
 After running the pipeline:
