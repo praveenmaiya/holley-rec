@@ -9,7 +9,9 @@ Last updated: 2026-01-02
 
 ## The Official 13 Tips (From Twitter Thread)
 
-Source: https://x.com/bcherny/status/2007179858435281082
+**Sources:**
+- Thread Part 1: https://x.com/bcherny/status/2007179858435281082
+- Thread Part 2: https://x.com/bcherny/status/2007179832300581177
 
 ### 1. Run 5 Claudes in Parallel (Terminal)
 Number your terminal tabs 1-5, use system notifications to know when a Claude needs input.
@@ -47,21 +49,42 @@ Use slash commands for workflows you do many times a day:
 - Commands live in `.claude/commands/` and are checked into git
 - Example: `/commit-push-pr` with inline bash to pre-compute git status
 
+**Pro tip**: Add inline bash to pre-compute context and avoid back-and-forth:
+```markdown
+# In your command file
+\`\`\`bash
+git status --short
+git diff --stat
+git log -3 --oneline
+\`\`\`
+```
+- Docs: https://code.claude.com/docs/en/slash-commands#bash-command-execution
+
 ### 8. Subagents for Common Workflows
+> "I use a few subagents regularly: code-simplifier simplifies the code after Claude is done working, verify-app has detailed instructions for testing Claude Code end to end, and so on. Similar to slash commands, I think of subagents as automating the most common workflows that I do for most PRs."
+
 Regular subagents Boris uses:
 - `code-simplifier` - simplifies code after Claude is done
 - `verify-app` - detailed instructions for testing end-to-end
 - Think of subagents as automating the most common workflows for most PRs
+- Docs: https://code.claude.com/docs/en/sub-agents
 
 ### 9. PostToolUse Hook to Format Code
+> "We use a PostToolUse hook to format Claude's code. Claude usually generates well-formatted code out of the box, and the hook handles the last 10% to avoid formatting errors in CI later."
+
 - Claude usually generates well-formatted code out of the box
 - Hook handles the last 10% to avoid formatting errors in CI later
+- Docs: https://code.claude.com/docs/en/hooks-guide
 
 ### 10. Use /permissions Instead of --dangerously-skip-permissions
+> "I don't use --dangerously-skip-permissions. Instead, I use /permissions to pre-allow common bash commands that I know are safe in my environment, to avoid unnecessary permission prompts. Most of these are checked into .claude/settings.json and shared with the team."
+
 - Use `/permissions` to pre-allow common bash commands you know are safe
 - Most are checked into `.claude/settings.json` and shared with team
 
 ### 11. Claude Uses All Your Tools (MCP)
+> "Claude Code uses all my tools for me. It often searches and posts to Slack (via the MCP server), runs BigQuery queries to answer analytics questions (using bq CLI), grabs error logs from Sentry, etc. The Slack MCP configuration is checked into our .mcp.json and shared with the team."
+
 Claude Code uses all Boris's tools:
 - Searches and posts to Slack (via MCP server)
 - Runs BigQuery queries (bq CLI)
@@ -69,14 +92,22 @@ Claude Code uses all Boris's tools:
 - MCP configuration checked into `.mcp.json` and shared with team
 
 ### 12. Long-Running Tasks: Background Agents + Stop Hooks
+> "For very long-running tasks, I will either (a) prompt Claude to verify its work with a background agent when it's done, (b) use an agent Stop hook to do that more deterministically, or (c) use the ralph-wiggum plugin. I will also use either --permission-mode=dontAsk or --dangerously-skip-permissions in a sandbox to avoid permission prompts for the session, so Claude can cook without being blocked on me."
+
 For very long-running tasks:
 - (a) Prompt Claude to verify its work with a background agent when done
 - (b) Use an agent Stop hook to do that more deterministically
 - (c) Use the `ralph-wiggum` plugin to keep Claude going
 - Use `--permission-mode=dontAsk` or `--dangerously-skip-permissions` in sandbox
 
+**Links:**
+- ralph-wiggum plugin: https://github.com/anthropics/claude-plugins-official/tree/main/plugins/ralph-wiggum
+- Hooks guide: https://code.claude.com/docs/en/hooks-guide
+
 ### 13. Give Claude a Way to Verify Its Work (MOST IMPORTANT)
 > "Probably the most important thing to get great results out of Claude Code - give Claude a way to verify its work. If Claude has that feedback loop, it will 2-3x the quality of the final result."
+
+> "Claude tests every single change I land to claude.ai/code using the Claude Chrome extension. It opens a browser, tests the UI, and iterates until the code works and the UX feels good."
 
 Verification looks different for each domain:
 - Running bash commands
@@ -84,6 +115,8 @@ Verification looks different for each domain:
 - Testing app in browser (Claude Chrome extension)
 - Testing in phone simulator
 - **Make sure to invest in making this rock-solid**
+
+- Chrome Extension: https://code.claude.com/docs/en/chrome
 
 ---
 
@@ -151,7 +184,7 @@ Verification looks different for each domain:
 
 | Tip # | Feature | Status | Gap |
 |-------|---------|--------|-----|
-| 11 | MCP | Partial | No Slack MCP, no `.mcp.json` (bq CLI sufficient for now) |
+| 11 | MCP | Partial | `.mcp.json` with Linear MCP, bq CLI. No Slack MCP yet |
 
 ### Not Implemented Yet
 
