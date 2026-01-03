@@ -15,9 +15,9 @@ Vehicle fitment recommendations for automotive parts using collaborative filteri
 3. ASK if unclear - don't assume
 
 ### CODE
-1. Reference `@agent_docs/` for patterns
-2. Use existing SQL in `sql/recommendations/`
-3. Run `bq query --dry_run` before execution
+1. Use existing SQL patterns in `sql/recommendations/`
+2. Run `bq query --dry_run` before execution
+3. Use `sql-debugger` subagent if errors occur
 
 ### REVIEW
 1. Run `sql/validation/qa_checks.sql`
@@ -30,8 +30,6 @@ Vehicle fitment recommendations for automotive parts using collaborative filteri
 |------|---------|
 | `sql/recommendations/v5_7_*.sql` | Production pipeline |
 | `sql/validation/qa_checks.sql` | QA validation |
-| `agent_docs/architecture.md` | System design, scoring |
-| `agent_docs/bigquery.md` | Event schema, SQL gotchas |
 | `specs/v5_6_recommendations.md` | Current spec |
 | `configs/dev.yaml` | Configuration |
 | `configs/personalized_treatments.csv` | 10 Personalized Fitment treatment IDs |
@@ -41,7 +39,6 @@ Vehicle fitment recommendations for automotive parts using collaborative filteri
 | `docs/release_notes.md` | Pipeline version history and changes |
 | `docs/pipeline_run_stats.md` | Pipeline run history & comparison stats |
 | `src/bandit_click_holley.py` | Email treatment Click Bandit analysis |
-| `agent_docs/postgres_treatments.md` | PostgreSQL treatment DB queries & schema |
 | `flows/metaflow_runner.py` | K8s script runner via Metaflow |
 | `flows/run.sh` | Run scripts on K8s |
 | `flows/README.md` | Metaflow setup instructions |
@@ -128,6 +125,16 @@ make test && make lint
 | CTR (of sent) | clicks / sent | Overall effectiveness |
 | Conversion Rate | orders / clicks | Purchase intent |
 
+## Custom Subagents
+
+Project-specific subagents in `.claude/agents/`:
+
+| Agent | Purpose | When to Use |
+|-------|---------|-------------|
+| `code-reviewer` | Code quality, security, tests | After writing/modifying code |
+| `sql-debugger` | BigQuery errors, optimization | When SQL fails or needs optimization |
+| `pipeline-verifier` | QA validation, pass/fail | After running pipeline |
+
 ## When to Spawn Subagents
 
 | Task | Agent Type | Why |
@@ -135,7 +142,9 @@ make test && make lint
 | "Explore the codebase" | Explore | Fast, focused search |
 | "Plan the implementation" | Plan | Architecture decisions |
 | "Find where X happens" | Explore | Pattern matching |
-| "Debug this SQL error" | General-purpose | Needs full context |
+| "Debug this SQL error" | `sql-debugger` | Has debugging workflow + gotchas |
+| "Review my code" | `code-reviewer` | Has review checklist |
+| "Verify pipeline output" | `pipeline-verifier` | Has QA checks + thresholds |
 | "Analyze CTR data" | General-purpose | Multi-step analysis |
 | "Compare pipeline versions" | General-purpose | Multiple queries needed |
 
@@ -168,7 +177,12 @@ Hooks receive JSON via stdin and use `jq` to parse. Exit code 2 blocks the opera
 
 **Note:** Restart Claude Code if hooks don't trigger after config changes.
 
-## Docs (read before coding)
-- `@agent_docs/architecture.md` - Pipeline, scoring formula
-- `@agent_docs/bigquery.md` - Event bugs, SQL patterns
-- `@agent_docs/postgres_treatments.md` - Treatment DB schema, query patterns
+## PostgreSQL Treatment Queries
+
+Query treatment data via BigQuery federated query:
+```sql
+SELECT * FROM EXTERNAL_QUERY(
+  "projects/auxia-gcp/locations/asia-northeast1/connections/jp-psql_hbProdDb",
+  "SELECT treatment_id, name, is_paused FROM treatment WHERE company_id = 1950"
+)
+```

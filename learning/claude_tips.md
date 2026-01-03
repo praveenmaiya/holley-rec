@@ -137,21 +137,20 @@ Verification looks different for each domain:
 | Tip # | Feature | Our Implementation |
 |-------|---------|-------------------|
 | 3 | Opus 4.5 | Using Opus 4.5 with thinking |
-| 4 | CLAUDE.md | Strong CLAUDE.md with patterns, gotchas |
+| 4 | CLAUDE.md | Strong CLAUDE.md with patterns, gotchas (consolidated) |
 | 6 | Plan Mode | Plan -> Code -> Review workflow, `/plan` command |
 | 7 | Slash Commands | `/commit`, `/plan`, `/implement`, `/review`, `/eval` |
+| 8 | Subagents | `code-reviewer`, `sql-debugger`, `pipeline-verifier` in `.claude/agents/` |
 | 9 | Format Hook | PostToolUse hook for Python (ruff) + SQL validation |
 | 10 | /permissions | `.claude/settings.json` with allow list (bq, make, pytest, ruff, mypy) |
 | 11 | Tool Integration | BigQuery via `bq` CLI |
-| 13 | Verification | Auto-verification in `/run-pipeline`, `/validate` skill |
+| 13 | Verification | Auto-verification in `/run-pipeline`, `/validate` skill, `pipeline-verifier` subagent |
 
 ### Partially Implemented
 
 | Tip # | Feature | Status | Gap |
 |-------|---------|--------|-----|
-| 4 | CLAUDE.md | Partial | Need to consolidate 9+ gotchas from agent_docs |
-| 8 | Subagents | Partial | Have 14 skills, no `code-simplifier` or `verify-app` |
-| 11 | MCP | Partial | No Slack MCP, no `.mcp.json` |
+| 11 | MCP | Partial | No Slack MCP, no `.mcp.json` (bq CLI sufficient for now) |
 
 ### Not Implemented Yet
 
@@ -165,8 +164,6 @@ Verification looks different for each domain:
 ### To Explore
 - [ ] Install Claude Code GitHub Action (`/install-github-action`)
 - [ ] Stop hooks + ralph-wiggum plugin for pipeline runs
-- [ ] `code-simplifier` subagent for post-coding cleanup
-- [ ] `verify-app` subagent for end-to-end testing
 - [ ] Git worktrees for parallel Claude instances
 - [ ] Slack MCP server if needed
 
