@@ -144,6 +144,7 @@ Verification looks different for each domain:
 | 9 | Format Hook | PostToolUse hook for Python (ruff) + SQL validation |
 | 10 | /permissions | `.claude/settings.json` with allow list (bq, make, pytest, ruff, mypy) |
 | 11 | Tool Integration | BigQuery via `bq` CLI |
+| 5 | GitHub Action | `.github/workflows/claude.yml` for @claude PR tagging |
 | 13 | Verification | Auto-verification in `/run-pipeline`, `/validate` skill, `pipeline-verifier` subagent |
 
 ### Partially Implemented
@@ -158,11 +159,10 @@ Verification looks different for each domain:
 |-------|---------|----------|-------|
 | 1 | 5 Parallel Terminals | Low | User workflow preference |
 | 2 | claude.ai/code + Mobile | Low | User workflow preference |
-| 5 | GitHub Action @.claude | HIGH | `/install-github-action` needed |
 | 12 | Stop Hooks | Medium | ralph-wiggum plugin for long runs |
 
 ### To Explore
-- [ ] Install Claude Code GitHub Action (`/install-github-action`)
+- [x] Install Claude Code GitHub Action (`.github/workflows/claude.yml`) ✅
 - [ ] Stop hooks + ralph-wiggum plugin for pipeline runs
 - [ ] Git worktrees for parallel Claude instances
 - [ ] Slack MCP server if needed
