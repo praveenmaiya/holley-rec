@@ -5,6 +5,51 @@
 
 ---
 
+## 2026-01-02 (Thursday)
+
+### Focus: Claude Code Best Practices & Analytics Subagents
+
+Implemented Boris Cherny's 13 Claude Code tips and created analytics-focused subagents for CTR, uplift, and conversion analysis.
+
+#### Business Impact
+- **Faster analytics**: 3 new subagents encode CTR/uplift/conversion patterns - no need to re-explain methodology
+- **Consistent analysis**: MECE framework and Thompson Sampling baked into subagent prompts
+- **Team velocity**: GitHub Action enables @claude on PRs, Linear MCP for issue tracking
+
+#### Subagents Created (6 total)
+
+| Agent | Purpose | Business Use |
+|-------|---------|--------------|
+| `ctr-analyst` | Thompson Sampling, Beta posteriors | Treatment performance ranking |
+| `uplift-analyst` | MECE framework, within-user comparison | Personalized vs Static comparison |
+| `conversion-analyst` | Click-to-order, revenue attribution | Revenue impact analysis |
+| `code-reviewer` | Code quality, security | Code review automation |
+| `sql-debugger` | BigQuery error diagnosis | Faster debugging |
+| `pipeline-verifier` | QA validation, pass/fail | Pipeline quality gates |
+
+#### Infrastructure Added
+
+| Feature | File | Purpose |
+|---------|------|---------|
+| `/commit` command | `.claude/commands/commit.md` | Streamlined git workflow |
+| GitHub Action | `.github/workflows/claude.yml` | @claude on PRs |
+| Linear MCP | `.mcp.json` | Issue tracking integration |
+| Pre-commit hooks | `.pre-commit-config.yaml` | Code quality gates |
+| Python format hook | `.claude/settings.json` | Auto-format with ruff |
+
+#### Boris Cherny Tips Status
+- **11/13 implemented** (Tips 3-11, 13)
+- **Remaining**: Tip 1-2 (user preference), Tip 12 (stop hooks - optional)
+
+#### Commits
+- `ccd8f61` - Add Boris Cherny tips and Phase 1 improvements
+- `b9992da` - Convert agent_docs to Claude Code subagents
+- `ea6e328` - Add Claude Code GitHub Action
+- `704d105` - Add 3 analytics subagents
+- `e9697b0` - Add Linear MCP config
+
+---
+
 ## 2025-12-29 (Sunday)
 
 ### Focus: Agent Infrastructure & Analysis
