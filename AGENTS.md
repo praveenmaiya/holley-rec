@@ -129,11 +129,19 @@ make test && make lint
 
 Project-specific subagents in `.claude/agents/`:
 
+### Pipeline & Code
 | Agent | Purpose | When to Use |
 |-------|---------|-------------|
 | `code-reviewer` | Code quality, security, tests | After writing/modifying code |
 | `sql-debugger` | BigQuery errors, optimization | When SQL fails or needs optimization |
 | `pipeline-verifier` | QA validation, pass/fail | After running pipeline |
+
+### Analytics
+| Agent | Purpose | When to Use |
+|-------|---------|-------------|
+| `ctr-analyst` | Thompson Sampling, treatment CTR | "What's the CTR?" or ranking treatments |
+| `uplift-analyst` | MECE framework, within-user comparison | "Is Personalized beating Static?" |
+| `conversion-analyst` | Click-to-order, revenue, AOV | "What's conversion rate?" or revenue analysis |
 
 ## When to Spawn Subagents
 
@@ -145,7 +153,9 @@ Project-specific subagents in `.claude/agents/`:
 | "Debug this SQL error" | `sql-debugger` | Has debugging workflow + gotchas |
 | "Review my code" | `code-reviewer` | Has review checklist |
 | "Verify pipeline output" | `pipeline-verifier` | Has QA checks + thresholds |
-| "Analyze CTR data" | General-purpose | Multi-step analysis |
+| "What's the CTR?" | `ctr-analyst` | Thompson Sampling + posteriors |
+| "Is Personalized beating Static?" | `uplift-analyst` | MECE framework + within-user |
+| "What's conversion rate?" | `conversion-analyst` | Funnel + revenue attribution |
 | "Compare pipeline versions" | General-purpose | Multiple queries needed |
 
 ## Skills Available
