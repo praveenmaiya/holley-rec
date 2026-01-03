@@ -97,7 +97,7 @@ SELECT
     COUNT(DISTINCT CASE WHEN interaction_type = 'VIEWED' THEN user_id END)
   ) * 100, 2) as ctr_pct
 FROM \`auxia-gcp.company_1950.treatment_interaction\`
-WHERE DATE(TIMESTAMP_MICROS(interaction_timestamp_micros)) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+WHERE DATE(interaction_timestamp_micros) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 "
 ```
 
