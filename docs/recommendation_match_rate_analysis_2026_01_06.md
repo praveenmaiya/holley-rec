@@ -226,6 +226,51 @@ GROUP BY 1
 
 ---
 
+## Section 5: Retrospective Backtest (Dec 15 - Jan 5)
+
+To validate the algorithm improvements, we ran a backtest asking: "If we generated recommendations on Dec 15, would they have matched purchases through Jan 5?"
+
+### Backtest Design
+- **Test cutoff**: Dec 15, 2025 (generate recs as of this date)
+- **Evaluation window**: Dec 15 - Jan 5, 2026 (21 days of purchases)
+- **Users analyzed**: Those with vehicle data who purchased during the window
+
+### Key Findings
+
+| Metric | Value |
+|--------|-------|
+| Fitting purchase pairs | 462 |
+| Exact matches | **0 (0%)** |
+| Near-miss (same family, 6-char prefix) | 38 (8.2%) |
+| Near-miss (same brand, 4-char prefix) | 34 (7.4%) |
+| **Completely unrelated products** | **390 (84.4%)** |
+
+### Root Cause Confirmed
+
+**Even when users buy products that FIT their vehicle, we're recommending completely unrelated products 84% of the time.**
+
+Examples from the backtest:
+
+| User | Vehicle | Purchased (fits vehicle) | Recommended |
+|------|---------|--------------------------|-------------|
+| john173d@hotmail.com | 1966 Cadillac DeVille | 31193, 8363 | LFRB125, 0-80457S, 8202 |
+| veritasproject777@gmail.com | 1966 Chevrolet El Camino | LFRB145, LFRB146 | 550-511-3XX, 0-80457S |
+| pjc@winstoncashatt.com | 1966 Ford Mustang | B1AZ-3518-A, C3DZ-3517-A | C5AZ-6316-B, C6ZZ-10B960KBK |
+
+### Why V5.7 and V5.8 Both Show 0 Matches
+
+Both algorithms prioritize globally popular products that fit many vehicles. The segment-based scoring in v5.8 helps, but the fundamental issue is:
+
+1. **Fitment data gap**: 78.6% of purchased SKUs are NOT in the recommendation catalog
+2. **Broad fitment bias**: We recommend products fitting 2,000+ vehicles
+3. **Wrong signal**: Global popularity ≠ segment relevance
+
+### Implication
+
+The v5.8 algorithm changes (segment popularity, narrow fit bonus) are directionally correct but insufficient. The core issue is **catalog coverage** - we can only recommend ~21% of what users actually buy.
+
+---
+
 ## Related Documents
 
 - `specs/algorithm_fix_per_vehicle_sales_velocity.md` - Implementation spec
