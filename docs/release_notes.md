@@ -1,5 +1,152 @@
 # Holley Recommendations - Release Notes
 
+## V5.17 (January 7, 2026)
+
+**Dataset**: `auxia-reporting.temp_holley_v5_17`
+**Script**: `sql/recommendations/v5_17_vehicle_fitment_recommendations.sql`
+
+### Summary
+
+3-tier popularity fallback to reduce global fallback from 24% to 2%.
+
+| Tier | Threshold | Weight | V5.16 | V5.17 |
+|------|-----------|--------|-------|-------|
+| Segment (make/model) | ≥5 orders | 10.0 | 76% | 87% |
+| Make (new) | ≥20 orders | 8.0 | - | 11% |
+| Global | fallback | 2.0 | 24% | 2% |
+
+### Problem Solved
+
+In V5.16, **24% of users (120K)** had sparse make/model data and fell back to generic global popularity. These users got less relevant recommendations.
+
+### V5.17 Solution
+
+Added intermediate **make-level** fallback:
+- Users with sparse FORD/MUSTANG data now get FORD-wide popularity
+- More relevant than random global products
+- 54K users now use make-level instead of global
+
+### Backtest Results
+
+| Metric | V5.16 | V5.17 | Change |
+|--------|-------|-------|--------|
+| Match rate | 0.35% | 0.38% | +7% |
+| Segment users | 381K (76%) | 436K (87%) | +14% |
+| Global users | 120K (24%) | 12K (2%) | **-90%** |
+
+### Fallback Logic
+
+```sql
+CASE
+  WHEN segment_orders >= 5 THEN segment_popularity_score
+  WHEN make_orders >= 20 THEN make_popularity_score  -- NEW
+  ELSE global_popularity_score
+END
+```
+
+### New Tables
+
+| Table | Purpose |
+|-------|---------|
+| `make_popularity` | Products ranked by make (aggregated across models) |
+
+### New Columns in Output
+
+| Column | Values |
+|--------|--------|
+| `rec1_pop_source` | 'segment', 'make', or 'global' |
+
+---
+
+## V5.16 (January 7, 2026)
+
+**Dataset**: `auxia-reporting.temp_holley_v5_16`
+**Script**: `sql/recommendations/v5_16_vehicle_fitment_recommendations.sql`
+
+### Summary
+
+Segment-based popularity ranking. Products ranked by what users with the **same vehicle (make/model)** buy, instead of global popularity.
+
+### Key Changes
+
+| Aspect | V5.15 | V5.16 |
+|--------|-------|-------|
+| Popularity | Global (all users) | Segment (same make/model) |
+| Scoring | `LOG(1 + global_orders) * 2` | `LOG(1 + segment_orders) * 10` |
+| Fallback | N/A | Global popularity if segment is sparse |
+
+### Backtest Results
+
+| Metric | V5.15 | V5.16 | Change |
+|--------|-------|-------|--------|
+| Match rate | 7.0% | 9.3% | **+32%** |
+| Fitment matches | 50 | 84 | **+68%** |
+
+### Pipeline Structure
+
+1. **Fitment products** - Match user's YMM, scored by segment popularity
+2. **Universal products** - Top 500, scored by global popularity
+3. **Both compete** - Top 4 by `final_score = intent_score + popularity_score`
+
+### New Tables
+
+| Table | Purpose |
+|-------|---------|
+| `segment_popularity` | Products ranked by make/model segment |
+| `global_popularity_fallback` | Fallback for sparse segments |
+
+### New Columns in Output
+
+| Column | Purpose |
+|--------|---------|
+| `rec1_pop_source` | 'segment' or 'global' - tracks scoring source |
+| `rec2_pop_source`, etc. | Same for slots 2-4 |
+
+---
+
+## V5.15 (January 2026)
+
+**Dataset**: `auxia-reporting.temp_holley_v5_15`
+**Script**: `sql/recommendations/v5_15_vehicle_fitment_recommendations.sql`
+
+### Summary
+
+Added Universal products (top 500) alongside Fitment products. Both pools compete for 4 recommendation slots.
+
+### Investigation Finding
+
+Initial backtest claimed +162% improvement, but re-investigation showed only **+16%** improvement over V5.12. Root cause: Universal products have ~20% higher popularity scores, displacing fitment products.
+
+See: `docs/v5_15_investigation_summary.md`
+
+---
+
+## CF Analysis - SKIPPED (January 7, 2026)
+
+**Decision**: Do not implement collaborative filtering.
+
+### Analysis Summary
+
+Investigated "users who bought X also bought Y" as improvement strategy.
+
+| Approach | Match Rate | Notes |
+|----------|------------|-------|
+| V5.16 Baseline | 9.01% | Current |
+| V5.16 + CF (Reserved Slot) | 9.07% | **+0.06%** - not worth it |
+| V5.16 + CF (Hybrid Score) | 7.45% | **Worse** - CF displaces segment items |
+
+### Why CF Doesn't Help
+
+1. Only 18% are repeat buyers (CF only applies to them)
+2. Data sparsity - need 3+ co-purchases for valid signal
+3. Long-tail distribution - purchases spread across 4,500+ SKUs
+
+**Conclusion**: +0.06% gain doesn't justify complexity. Focus on other improvements.
+
+See: `docs/cf_analysis_2026_01_07.md`
+
+---
+
 ## V5.7 (December 21, 2025)
 
 **Dataset**: `auxia-reporting.temp_holley_v5_7`
