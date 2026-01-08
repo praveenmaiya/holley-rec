@@ -251,15 +251,20 @@ final_score = intent_score + LOG(1 + global_orders) * 2
 
 ---
 
-## V5.15: Universal + Fitment Products
+## V5.15: Universal + Fitment Products + VFU-Only Popularity
 
 **Hypothesis**: V5.12 only recommends fitment products, missing 70% of VFU purchases. Adding universal products should dramatically improve match rate.
 
 **Changes**:
-- Add universal products (NOT in fitment catalog) to recommendation pool
-- Fitment products: Still require YMM match
-- Universal products: Available to ALL users (no YMM filter needed)
-- Limit to top 500 universal products by popularity
+1. **Product Pool**: Add universal products (NOT in fitment catalog) to recommendation pool
+   - Fitment products: Still require YMM match
+   - Universal products: Available to ALL users (no YMM filter needed)
+   - Limit to top 500 universal products by popularity
+
+2. **Popularity Scoring**: Use VFU users' purchase history only (not all 2M users)
+   - Before: Global popularity from ALL users
+   - After: Popularity from 500K VFU users only
+   - Rationale: VFU users are automotive enthusiasts with different buying patterns
 
 **Results (Dec 16 - Jan 5 backtest)**:
 | Metric | V5.12 | V5.15 | Improvement |

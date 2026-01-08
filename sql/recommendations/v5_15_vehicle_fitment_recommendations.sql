@@ -569,24 +569,28 @@ WHERE EXISTS (SELECT 1 FROM eligible_skus es WHERE a.sku = es.sku);
 """, tbl_intent, tbl_staged_events, tbl_eligible_parts, tbl_universal_parts);
 
 -- -----------------------------------------------------------------------------------
--- STEP 2.2: POPULARITY SCORES (V5.15: Include both fitment AND universal SKUs)
+-- STEP 2.2: POPULARITY SCORES (V5.15: VFU users only + both fitment AND universal SKUs)
 -- -----------------------------------------------------------------------------------
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY sku AS
 WITH historical AS (
-  SELECT sku, COUNT(*) AS order_count
-  FROM %s
-  WHERE is_popularity_window = 1
-  GROUP BY sku
+  -- V5.15: Only count orders from VFU users (not all 2M users)
+  SELECT io.sku, COUNT(*) AS order_count
+  FROM %s io
+  WHERE io.is_popularity_window = 1
+    AND io.email_lower IN (SELECT email_lower FROM %s)
+  GROUP BY io.sku
 ),
 recent AS (
+  -- V5.15: Only count orders from VFU users
   SELECT sku,
          COUNT(*) AS order_count
   FROM %s
   WHERE sku IS NOT NULL
     AND user_id IS NOT NULL
     AND UPPER(event_name) IN ('PLACED ORDER','ORDERED PRODUCT','CONSUMER WEBSITE ORDER')
+    AND user_id IN (SELECT user_id FROM %s)
   GROUP BY sku
 ),
 combined AS (
@@ -603,7 +607,7 @@ SELECT
   total_orders,
   LOG(1 + total_orders) * 2 AS popularity_score
 FROM combined;
-""", tbl_popularity, tbl_import_orders_filtered, tbl_staged_events);
+""", tbl_popularity, tbl_import_orders_filtered, tbl_users, tbl_staged_events, tbl_users);
 
 SET step_end = CURRENT_TIMESTAMP();
 SELECT FORMAT('[Step 2] Scoring (intent + popularity): %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;

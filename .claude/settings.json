@@ -1,12 +1,25 @@
 {
   "permissions": {
     "allow": [
-      "Bash(bq query:*)",
+      "Bash(bq:*)",
       "Bash(make:*)",
       "Bash(pytest:*)",
-      "Bash(python scripts/*)",
+      "Bash(python:*)",
+      "Bash(python3:*)",
       "Bash(ruff:*)",
-      "Bash(mypy:*)"
+      "Bash(mypy:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(ls:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(sed:*)",
+      "Bash(awk:*)",
+      "Edit(sql/**)",
+      "Write(sql/**)"
     ]
   },
   "hooks": {
