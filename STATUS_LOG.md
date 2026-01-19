@@ -5,6 +5,71 @@
 
 ---
 
+## 2026-01-19 (Sunday)
+
+### Focus: v5.17 Uplift Validation & Post-Purchase Analysis
+
+Completed comprehensive analysis validating v5.17 deployment impact and comparing Personalized vs Static treatment performance.
+
+#### v5.7 vs v5.17 Deployment Impact (Key Business Result)
+
+| Metric | v5.7 Baseline (Dec 15 - Jan 9) | v5.17 (Jan 10-13) | Uplift |
+|--------|-------------------------------|-------------------|--------|
+| Open Rate | 4.25% | 11.88% | **+180%** |
+| CTR of Sends | 0.48% | 0.93% | **+94%** |
+
+**Validation:** Static treatments (control) improved only +87% open rate in the same period, confirming v5.17's **2.1x relative gain** is due to the algorithm change, not systemic factors.
+
+**Same-User Validation:** 221 users who received emails in both periods opened v5.17 emails **58% more often** (5.78% → 9.13%).
+
+#### Personalized vs Static CTR (Treatment Comparison)
+
+| Approach | Personalized | Static | Uplift | Valid? |
+|----------|--------------|--------|--------|--------|
+| A: Direct (60-day) | 11.54% CTR of opens | 8.29% | **+39%** | ⚠️ Selection bias |
+| B: Same-user (n=969) | 2.99% clicked | 2.48% | **+21%** | ✅ Gold standard |
+
+#### Client Communication
+
+> "After deploying v5.17 segment-based recommendations on Jan 10:
+> - Open rates nearly tripled (4.25% → 11.88%)
+> - Click-through rates nearly doubled (0.48% → 0.93%)
+> - Same users opened Personalized emails 58% more often after the upgrade
+>
+> The improvement for Personalized (180%) was 2x larger than Static (87%), confirming v5.17 is driving real engagement gains."
+
+#### Documents Created
+| File | Purpose |
+|------|---------|
+| `docs/v57_vs_v517_uplift_analysis_2026_01_19.md` | v5.17 deployment impact analysis |
+| `docs/post_purchase_uplift_analysis_2026_01_19.md` | Personalized vs Static methodology |
+
+#### Linear Ticket Updated
+- [AUX-11471](https://linear.app/auxia/issue/AUX-11471) - Added v5.17 uplift findings
+
+---
+
+## 2026-01-13 (Tuesday)
+
+### Focus: V5.17 Multi-Tier Fallback & Automation
+
+- **Relevance Breakthrough:** Successfully transitioned from global popularity (v5.7) to segment-specific sales velocity (v5.17). Recommendations are now tailored to 1,100+ vehicle segments, prioritizing what owners of the same make/model actually buy.
+- **Improved Coverage:** Introduced a 3-tier fallback (Segment → Make → Global). Global fallback dropped from 24% to 2% of users, while 87% now receive highly relevant segment-level recommendations.
+- **Match Rate Improvement:** Backtest match rates improved from near-zero to 0.38% after refining candidate pools and addressing the fitment data gap (65% of user purchases were previously untracked).
+- **Automation:** Configured Metaflow cron job for automated daily pipeline runs. Finalizing Gradle dependency resolution for seamless deployment.
+
+#### Documents Updated
+| File | Purpose |
+|------|---------|
+| `docs/weekly_updates.md` | Team-facing business summary |
+| `docs/v5_15_investigation_summary.md` | Correction of initial match rate estimates |
+| `docs/cf_analysis_2026_01_07.md` | Decision to skip CF due to low repeat intent |
+
+#### Commits
+`fd5bf9e`, `8f55b51`, `17acdc1`, `35318bd`
+
+---
+
 ## 2026-01-05 (Sunday)
 
 ### Focus: Algorithm Root Cause Analysis & v5.8 Fix Spec
