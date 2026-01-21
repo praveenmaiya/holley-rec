@@ -38,11 +38,30 @@ Completed comprehensive analysis validating v5.17 deployment impact and comparin
 >
 > The improvement for Personalized (180%) was 2x larger than Static (87%), confirming v5.17 is driving real engagement gains."
 
+#### 50/50 Split Investigation (Performance Drop Root Cause)
+
+Investigated why CTR dropped 85% after the Jan 14 50/50 arm split.
+
+**Root Cause:** The two arms use different models with vastly different scoring:
+
+| Arm | Model ID | Avg Score | Post-50/50 CTR |
+|-----|----------|-----------|----------------|
+| 4103 | 1 (baseline) | 0.87 | **0%** (0 clicks) |
+| 4689 | 195001001 (bandit) | 0.08 | 0.76% (1 click) |
+
+**Key Issues:**
+1. Model 195001001 produces scores ~10x lower than baseline
+2. Users were fragmented across arms (64 users on multiple arms)
+3. 4 of 8 previous clickers were moved to arm 4689
+
+**Recommendation:** Revert to 90/10 or 95/5 split to protect v5.17 performance gains while investigating model 195001001.
+
 #### Documents Created
 | File | Purpose |
 |------|---------|
 | `docs/v57_vs_v517_uplift_analysis_2026_01_19.md` | v5.17 deployment impact analysis |
 | `docs/post_purchase_uplift_analysis_2026_01_19.md` | Personalized vs Static methodology |
+| `docs/50_50_split_investigation_2026_01_19.md` | 50/50 split root cause analysis |
 
 #### Linear Ticket Updated
 - [AUX-11471](https://linear.app/auxia/issue/AUX-11471) - Added v5.17 uplift findings
