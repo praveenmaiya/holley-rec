@@ -36,6 +36,49 @@ The most relevant production GNN system for our use case:
 
 **Results: 30-160% improvement** in HitRate and MRR over baselines.
 
+### Faire — GNN for Wholesale Recommendations (Most Similar to Holley)
+
+**Source**: [Graph neural networks at Faire](https://craft.faire.com/graph-neural-networks-at-faire-386024e5a6d9) by Bo Ning Wang, Jan 2026
+
+The closest analogy to our use case — B2B marketplace (3M retailers, 11M products, 2K+ categories, 140K brands). Replaced DeepFM with GNN.
+
+**Graph structure:**
+- **Bipartite graph**: Retailer nodes ↔ Product nodes
+- **Retailer node features**: Store type, country, learned ID embedding (concatenated)
+- **Product node features**: Pre-trained text embeddings (name/description, frozen), category, brand, brand country, learned product ID embedding
+- **Edge weights**: Function of interaction frequency × engagement type (click < favorite < add-to-cart < order)
+
+**Architecture — Two-tower GAT:**
+- Separate embedding towers for retailers and products
+- **GATConv** (Graph Attention) as core layer — learns which neighbor interactions matter most
+- Edge weights incorporated into attention aggregation (orders weigh more than clicks)
+- **1-hop neighbor sampling** (up to 50 neighbors per node) for scalability via PyTorch Geometric
+- MLP projection head on top of GATConv output
+- Dot product similarity between retailer and product embeddings for scoring
+- Deployed to **Elasticsearch KNN** for real-time serving
+
+**Training details:**
+- **Positive samples**: Edges above a weight threshold (filters noise from light interactions)
+- **Negative samples**: Mix of in-batch negatives + global random negatives
+- **Loss**: BCE with edge-weight weighting (penalizes more for mispredicting strong engagements)
+- **Time-decay on edge weights**: Most impactful single change — recall@10 +25.8%, recall@100 +15.4%
+- **Dual optimizer**: Separate optimizer for embedding layers (higher LR, more weight decay) vs GNN/MLP layers (stable LR)
+- **Warm-start retraining**: Regular cadence, loads previous embeddings as initialization to prevent drift
+
+**Results:**
+- GAT outperformed GraphSAGE in offline recall metrics
+- Time-decayed edge weighting was the single biggest offline improvement
+- **Online A/B test**: +10.5% order recall@10, +12% order recall@100 vs FM baseline
+- **+4.85% lift in orders** on category pages (production impact)
+- GNN contributed 34.1% of impressions vs FM's 33% — even though ranking pipeline was biased toward legacy FM features
+
+**What's next for Faire:**
+- Multi-hop neighbor aggregation (2-hop: retailer → product → similar retailers)
+- Heterogeneous graph with brand and category nodes
+- Multi-task learning (separate prediction heads for clicks, favorites, orders)
+
+**Key takeaway for Holley**: Faire's scale (3M retailers) dwarfs ours (475K users), and their retailers actively browse/order on the platform. Their edge density is orders of magnitude higher than ours. The +4.85% order lift is impressive but came from a context (category browsing pages) with high interaction density — very different from our cold-start email scenario.
+
 ### Pinterest — PinSage
 - Random-walk Graph Convolutional Network
 - Billions of nodes, web-scale
@@ -139,6 +182,7 @@ Use GNN for product-product similarity only (not full user-product):
 
 ## Sources
 
+- [Faire: Graph neural networks at Faire (Jan 2026)](https://craft.faire.com/graph-neural-networks-at-faire-386024e5a6d9)
 - [Amazon DAEMON: Using GNNs to recommend related products](https://www.amazon.science/blog/using-graph-neural-networks-to-recommend-related-products)
 - [GNN for Product Recommendation on Amazon Co-purchase Graph (Aug 2025)](https://arxiv.org/abs/2508.14059)
 - [Zalando: Exploring GNN Recommendations](https://engineering.zalando.com/posts/2024/12/gnn-recommendations-zalando.html)
