@@ -1,7 +1,7 @@
 # GNN Architecture Proposal: v6.0 Recommendation System
 
 **Author:** Praveen M | **Date:** February 2026 | **Status:** Proposal
-**Audience:** Kevin, Auxia Engineering | **Decision needed by:** March 2026 kickoff (contingent on contract renewal)
+**Audience:** Auxia Engineering | **Decision needed by:** March 2026 kickoff (contingent on contract renewal)
 
 ---
 
@@ -254,8 +254,8 @@ Phase 3:                                      [Shadow][Rollout]
 
 1. **Approve GNN as a Q2 2026 roadmap item**, contingent on contract renewal (mid-Feb decision)
 2. **Allocate $500–1,000 compute budget** for the 8–10 week experiment
-3. **Kevin as technical owner**: review prototype code in `src/gnn/`, validate architecture decisions
-4. **Staffing**: 1 engineer (Praveen), full-time for 8–10 weeks
+3. **Designate a technical owner** to review prototype code in `src/gnn/` and validate architecture decisions
+4. **Staffing**: 1 engineer, full-time for 8–10 weeks
 
 ### Next Steps
 
@@ -263,7 +263,7 @@ Phase 3:                                      [Shadow][Rollout]
 |------|------|
 | Mid-Feb 2026 | Contract renewal decision |
 | End-Feb 2026 | v5.18 A/B test results → establish baseline CTR |
-| Early March | Kevin reviews prototype code (`src/gnn/`, `flows/train_gnn.py`) |
+| Early March | Technical owner reviews prototype code (`src/gnn/`, `flows/train_gnn.py`) |
 | March kickoff | Phase 1 begins: export graph, train model, evaluate |
 | Week 5 (~mid-April) | Go/no-go #1: does GNN beat SQL offline? |
 | Week 7 (~end-April) | Go/no-go #2: does hybrid lift CTR? |
