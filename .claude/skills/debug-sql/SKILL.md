@@ -83,7 +83,7 @@ SELECT * FROM intermediate_cte LIMIT 10
 
 Always dry-run before full execution:
 ```bash
-bq query --dry_run --use_legacy_sql=false < sql/recommendations/v5_7_*.sql
+bq query --dry_run --use_legacy_sql=false < sql/recommendations/v5_17_*.sql
 ```
 
 Then run QA checks after:
@@ -93,5 +93,5 @@ bq query --use_legacy_sql=false < sql/validation/qa_checks.sql
 
 ## Related Files
 - `agent_docs/bigquery.md` - Known gotchas and patterns
-- `sql/recommendations/v5_7_vehicle_fitment_recommendations.sql` - Pipeline
+- `sql/recommendations/v5_17_vehicle_fitment_recommendations.sql` - Pipeline
 - `sql/validation/qa_checks.sql` - Validation suite

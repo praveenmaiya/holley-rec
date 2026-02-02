@@ -30,11 +30,11 @@ Complete deployment pipeline from execution to production in a single automated 
 
 ### Step 1: Run Pipeline
 
-Execute v5.7 pipeline:
+Execute v5.17 pipeline:
 
 ```bash
 echo "🚀 Running pipeline..."
-bq query --use_legacy_sql=false < sql/recommendations/v5_7_vehicle_fitment_recommendations.sql
+bq query --use_legacy_sql=false < sql/recommendations/v5_17_vehicle_fitment_recommendations.sql
 ```
 
 ### Step 2: Verify Output
@@ -51,14 +51,14 @@ SELECT
   MIN(rec1_price) as min_price,
   MAX(rec1_price) as max_price,
   ROUND(AVG(rec1_score), 2) as avg_score
-FROM \`auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations\`
+FROM \`auxia-reporting.temp_holley_v5_17.final_vehicle_recommendations\`
 GROUP BY pipeline_version
 "
 ```
 
 **Expected:**
 - ~450,000 users
-- pipeline_version = 'v5.7'
+- pipeline_version = 'v5.17'
 - min_price >= $50
 - max_price <= $10,000
 
@@ -99,7 +99,7 @@ WITH staging AS (
     COUNT(*) as users,
     ROUND(AVG(rec1_score), 2) as avg_score,
     ROUND(AVG(rec1_price), 2) as avg_price
-  FROM \`auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations\`
+  FROM \`auxia-reporting.temp_holley_v5_17.final_vehicle_recommendations\`
 ),
 prod AS (
   SELECT
@@ -118,7 +118,7 @@ Recommendation overlap:
 
 ```bash
 bq query --use_legacy_sql=false "
-WITH s AS (SELECT email_lower, rec_part_1 FROM \`auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations\`),
+WITH s AS (SELECT email_lower, rec_part_1 FROM \`auxia-reporting.temp_holley_v5_17.final_vehicle_recommendations\`),
 p AS (SELECT email_lower, rec_part_1 FROM \`auxia-reporting.company_1950_jp.final_vehicle_recommendations\`)
 SELECT
   ROUND(100.0 * COUNTIF(s.rec_part_1 = p.rec_part_1) / COUNT(*), 2) as pct_same_rec1
@@ -154,7 +154,7 @@ Ask: "Deploy staging to production? (yes/no)"
 echo "🚀 Deploying to production..."
 bq query --use_legacy_sql=false "
 CREATE OR REPLACE TABLE \`auxia-reporting.company_1950_jp.final_vehicle_recommendations\` AS
-SELECT * FROM \`auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations\`
+SELECT * FROM \`auxia-reporting.temp_holley_v5_17.final_vehicle_recommendations\`
 "
 ```
 
@@ -181,7 +181,7 @@ After successful deploy:
 
 ```bash
 # Log deployment
-echo "$(date '+%Y-%m-%d %H:%M'): Deployed v5.7 to production" >> STATUS_LOG.md
+echo "$(date '+%Y-%m-%d %H:%M'): Deployed v5.17 to production" >> STATUS_LOG.md
 ```
 
 Update `docs/pipeline_run_stats.md` with:

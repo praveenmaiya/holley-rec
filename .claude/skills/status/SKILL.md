@@ -52,7 +52,7 @@ SELECT
   ROUND(AVG(rec1_score), 2) as avg_score,
   ROUND(MIN(rec1_price), 2) as min_price,
   ROUND(MAX(rec1_price), 2) as max_price
-FROM \`auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations\`
+FROM \`auxia-reporting.temp_holley_v5_17.final_vehicle_recommendations\`
 GROUP BY pipeline_version
 " 2>/dev/null || echo "No staging data found"
 ```
@@ -66,7 +66,7 @@ echo "────────────────────────"
 bq query --use_legacy_sql=false "
 WITH staging AS (
   SELECT COUNT(*) as users, ROUND(AVG(rec1_score), 2) as score
-  FROM \`auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations\`
+  FROM \`auxia-reporting.temp_holley_v5_17.final_vehicle_recommendations\`
 ),
 prod AS (
   SELECT COUNT(*) as users, ROUND(AVG(rec1_score), 2) as score
@@ -124,7 +124,7 @@ tail -20 docs/decisions.md | head -15
 ```
 📦 PRODUCTION STATUS
 ────────────────────
-Version: v5.7
+Version: v5.17
 Users: 450,123
 Avg Score: 45.23
 Price Range: $50.00 - $9,500.00
@@ -132,7 +132,7 @@ HTTPS: 100%
 
 🔧 STAGING STATUS
 ─────────────────
-Version: v5.7
+Version: v5.17
 Users: 450,456
 Avg Score: 45.31
 
@@ -149,7 +149,7 @@ CTR: 2.56%
 
 📁 LOCAL CHANGES
 ────────────────
-M sql/recommendations/v5_7_*.sql
+M sql/recommendations/v5_17_*.sql
 
 📝 RECENT DECISIONS
 ───────────────────

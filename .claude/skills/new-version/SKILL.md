@@ -51,7 +51,7 @@ Copy and modify pipeline:
 
 ```bash
 # Copy existing pipeline as base
-cp sql/recommendations/v5_7_vehicle_fitment_recommendations.sql \
+cp sql/recommendations/v5_17_vehicle_fitment_recommendations.sql \
    sql/recommendations/v{version}_vehicle_fitment_recommendations.sql
 ```
 

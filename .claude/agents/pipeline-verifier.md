@@ -91,7 +91,7 @@ WHERE rec_part_1 = rec_part_2
 PIPELINE VERIFICATION: PASSED
 
 Users: 452,341
-Version: v5.7
+Version: v5.17
 Price Range: $50.00 - $7,599.00
 Avg Score: 12.34
 HTTPS: 100%
@@ -106,7 +106,7 @@ All checks passed. Ready for deployment.
 PIPELINE VERIFICATION: FAILED
 
 Users: 452,341
-Version: v5.7
+Version: v5.17
 
 FAILURES:
 - Min Price: $45.00 (expected >= $50)
@@ -134,7 +134,7 @@ SELECT
   COUNTIF(price < 50) as below_50,
   COUNTIF(price >= 50 AND price < 100) as p50_100,
   COUNTIF(price >= 100) as above_100
-FROM `auxia-reporting.temp_holley_v5_7.eligible_parts`
+FROM `auxia-reporting.temp_holley_v5_17.eligible_parts`
 ```
 
 ### Duplicate Investigation

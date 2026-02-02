@@ -9,7 +9,7 @@ allowed-tools: Bash, Read, Glob, AskUserQuestion
 Deploys vehicle fitment recommendations from staging to production with comprehensive validation.
 
 ## When to Use
-- After running v5.7 pipeline successfully
+- After running v5.17 pipeline successfully
 - After QA checks pass
 - When ready to push new recommendations live
 
@@ -39,7 +39,7 @@ SELECT
   MIN(rec1_price) as min_price,
   MAX(rec1_price) as max_price,
   pipeline_version
-FROM \`auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations\`
+FROM \`auxia-reporting.temp_holley_v5_17.final_vehicle_recommendations\`
 GROUP BY pipeline_version
 "
 ```
@@ -71,7 +71,7 @@ bq query --use_legacy_sql=false < sql/validation/qa_checks.sql
 bq query --use_legacy_sql=false "
 WITH staging AS (
   SELECT COUNT(*) as users, ROUND(AVG(rec1_score), 2) as avg_score
-  FROM \`auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations\`
+  FROM \`auxia-reporting.temp_holley_v5_17.final_vehicle_recommendations\`
 ),
 prod AS (
   SELECT COUNT(*) as users, ROUND(AVG(rec1_score), 2) as avg_score
@@ -100,7 +100,7 @@ Present:
 ```bash
 bq query --use_legacy_sql=false "
 CREATE OR REPLACE TABLE \`auxia-reporting.company_1950_jp.final_vehicle_recommendations\` AS
-SELECT * FROM \`auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations\`
+SELECT * FROM \`auxia-reporting.temp_holley_v5_17.final_vehicle_recommendations\`
 "
 ```
 

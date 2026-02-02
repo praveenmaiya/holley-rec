@@ -143,7 +143,7 @@ SELECT COUNT(*) as row_count FROM users_with_v1_vehicles
 
 ```bash
 # Dry run (validate + estimate cost)
-bq query --dry_run --use_legacy_sql=false < sql/recommendations/v5_7_*.sql
+bq query --dry_run --use_legacy_sql=false < sql/recommendations/v5_17_*.sql
 
 # Run QA checks
 bq query --use_legacy_sql=false < sql/validation/qa_checks.sql

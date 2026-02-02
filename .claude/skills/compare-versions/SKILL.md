@@ -44,7 +44,7 @@ SELECT
   ROUND(MIN(rec1_price), 2) as min_price,
   ROUND(MAX(rec1_price), 2) as max_price,
   COUNTIF(rec1_image LIKE 'https://%') * 100.0 / COUNT(*) as https_pct
-FROM \`auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations\`
+FROM \`auxia-reporting.temp_holley_v5_17.final_vehicle_recommendations\`
 "
 ```
 
@@ -60,7 +60,7 @@ WITH old AS (
 new AS (
   SELECT email_lower, rec_part_1, rec_part_2, rec_part_3, rec_part_4,
          rec1_score, rec2_score, rec3_score, rec4_score
-  FROM \`auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations\`
+  FROM \`auxia-reporting.temp_holley_v5_17.final_vehicle_recommendations\`
 )
 SELECT
   COUNT(*) as users_in_both,
@@ -88,7 +88,7 @@ WITH old AS (
 ),
 new AS (
   SELECT email_lower, rec_part_1 as new_rec1, rec1_score as new_score
-  FROM \`auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations\`
+  FROM \`auxia-reporting.temp_holley_v5_17.final_vehicle_recommendations\`
 )
 SELECT
   o.email_lower,

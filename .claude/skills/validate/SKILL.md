@@ -9,7 +9,7 @@ allowed-tools: Bash, Read, Glob
 Runs comprehensive QA checks on pipeline output.
 
 ## When to Use
-- After running v5.7 pipeline
+- After running v5.17 pipeline
 - Before deploying to production
 - When debugging data quality issues
 - As part of code review
@@ -51,7 +51,7 @@ If any check fails:
 # Find duplicate SKUs
 bq query --use_legacy_sql=false "
 SELECT email_lower, rec_part_1, rec_part_2, rec_part_3, rec_part_4
-FROM \`auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations\`
+FROM \`auxia-reporting.temp_holley_v5_17.final_vehicle_recommendations\`
 WHERE rec_part_1 IN (rec_part_2, rec_part_3, rec_part_4)
    OR rec_part_2 IN (rec_part_3, rec_part_4)
    OR rec_part_3 = rec_part_4
@@ -61,7 +61,7 @@ LIMIT 10
 # Find low-price items
 bq query --use_legacy_sql=false "
 SELECT email_lower, rec_part_1, rec1_price
-FROM \`auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations\`
+FROM \`auxia-reporting.temp_holley_v5_17.final_vehicle_recommendations\`
 WHERE rec1_price < 50
 LIMIT 10
 "
@@ -69,7 +69,7 @@ LIMIT 10
 # Check score ordering
 bq query --use_legacy_sql=false "
 SELECT email_lower, rec1_score, rec2_score, rec3_score, rec4_score
-FROM \`auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations\`
+FROM \`auxia-reporting.temp_holley_v5_17.final_vehicle_recommendations\`
 WHERE rec1_score < rec2_score
    OR rec2_score < rec3_score
    OR rec3_score < rec4_score
@@ -79,7 +79,7 @@ LIMIT 10
 # Check HTTPS images
 bq query --use_legacy_sql=false "
 SELECT email_lower, rec1_image
-FROM \`auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations\`
+FROM \`auxia-reporting.temp_holley_v5_17.final_vehicle_recommendations\`
 WHERE rec1_image NOT LIKE 'https://%'
 LIMIT 10
 "
