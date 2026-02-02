@@ -2,10 +2,33 @@
 
 Vehicle fitment recommendations for automotive parts using collaborative filtering.
 
+## Quick Start
+
+| I want to... | Do this |
+|--------------|---------|
+| Run the pipeline | `/run-pipeline` or `bq query < sql/recommendations/v5_17_*.sql` |
+| Check pipeline health | `/status` |
+| Validate output quality | `/validate` |
+| Deploy to production | `/deploy` (after validation passes) |
+| Debug a SQL error | `/debug-sql` or use `sql-debugger` agent |
+| Analyze CTR | `/analyze-ctr` or use `ctr-analyst` agent |
+| Compare Personalized vs Static | `/uplift` or use `uplift-analyst` agent |
+| Create a new version | `/new-version` (guided workflow) |
+| Full end-to-end deploy | `/full-deploy` (run → validate → compare → deploy) |
+| Write weekly update | `/weekly-update` (from STATUS_LOG + git) |
+
+## Architecture Docs
+
+| Doc | What it explains |
+|-----|------------------|
+| [Pipeline Architecture](docs/pipeline_architecture.md) | Data flow, scoring algorithm, filters, tuning knobs |
+| [BigQuery Schema](docs/bigquery_schema.md) | Table schemas, column types, query patterns, gotchas |
+| [Release Notes](docs/release_notes.md) | Version history and changes |
+
 ## Stack
 - Python 3.12+, uv, BigQuery (bq CLI), MLflow, W&B
 - Production: `auxia-reporting.company_1950_jp.final_vehicle_recommendations`
-- Working: `auxia-reporting.temp_holley_v5_7`
+- Working: `auxia-reporting.temp_holley_v5_17`
 
 ## Workflow: Plan → Code → Review
 
@@ -26,19 +49,38 @@ Vehicle fitment recommendations for automotive parts using collaborative filteri
 
 ## Key Files
 
+### Architecture (start here)
 | Path | Purpose |
 |------|---------|
-| `sql/recommendations/v5_7_*.sql` | Production pipeline |
+| `docs/pipeline_architecture.md` | **Data flow, scoring, filters, tuning knobs** |
+| `docs/bigquery_schema.md` | **Table schemas, gotchas, query patterns** |
+
+### Pipeline
+| Path | Purpose |
+|------|---------|
+| `sql/recommendations/v5_17_*.sql` | Production pipeline |
 | `sql/validation/qa_checks.sql` | QA validation |
 | `specs/v5_6_recommendations.md` | Current spec |
+
+### Config
+| Path | Purpose |
+|------|---------|
 | `configs/dev.yaml` | Configuration |
 | `configs/personalized_treatments.csv` | 10 Personalized Fitment treatment IDs |
 | `configs/static_treatments.csv` | 22 Static treatment IDs |
+
+### Analysis & Reports
+| Path | Purpose |
+|------|---------|
 | `docs/campaign_reports_2025_12_10.md` | Post-purchase email campaign analysis |
 | `docs/treatment_ctr_unbiased_analysis_2025_12_17.md` | Unbiased CTR analysis (Personalized vs Static) |
 | `docs/release_notes.md` | Pipeline version history and changes |
 | `docs/pipeline_run_stats.md` | Pipeline run history & comparison stats |
 | `src/bandit_click_holley.py` | Email treatment Click Bandit analysis |
+
+### Infrastructure
+| Path | Purpose |
+|------|---------|
 | `flows/metaflow_runner.py` | K8s script runner via Metaflow |
 | `flows/run.sh` | Run scripts on K8s |
 | `flows/README.md` | Metaflow setup instructions |
@@ -46,10 +88,10 @@ Vehicle fitment recommendations for automotive parts using collaborative filteri
 ## Commands
 ```bash
 # Validate SQL
-bq query --dry_run --use_legacy_sql=false < sql/recommendations/v5_7_*.sql
+bq query --dry_run --use_legacy_sql=false < sql/recommendations/v5_17_*.sql
 
 # Run pipeline
-bq query --use_legacy_sql=false < sql/recommendations/v5_7_*.sql
+bq query --use_legacy_sql=false < sql/recommendations/v5_17_*.sql
 
 # Run QA checks
 bq query --use_legacy_sql=false < sql/validation/qa_checks.sql
@@ -167,7 +209,7 @@ Project-specific subagents in `.claude/agents/`:
 - `/debug-sql` - SQL error diagnosis
 - `/compare-versions` - Pipeline version diff
 - `/deploy` - Deploy staging to production
-- `/run-pipeline` - Execute v5.7 pipeline
+- `/run-pipeline` - Execute v5.17 pipeline
 - `/status` - Quick health check (prod vs staging, CTR, git status)
 
 ### Workflow Skills (Multi-Step Automation)
@@ -195,4 +237,36 @@ SELECT * FROM EXTERNAL_QUERY(
   "projects/auxia-gcp/locations/asia-northeast1/connections/jp-psql_hbProdDb",
   "SELECT treatment_id, name, is_paused FROM treatment WHERE company_id = 1950"
 )
+```
+
+## Effective Prompts
+
+### Planning & Implementation
+```
+"Plan how to add [feature]. Consider the existing patterns in v5.17."
+"There's a bug where [X happens] but it should [Y]. Analyze and fix it."
+"Create a new pipeline version that [adds/changes] [feature]."
+```
+
+### Analysis & Debugging
+```
+"What's the CTR for Personalized vs Static treatments over the last 60 days?"
+"Debug this SQL error: [paste error message]"
+"Compare v5.17 vs v5.18 output - what changed?"
+"Is Personalized beating Static? Use unbiased methodology."
+```
+
+### Iteration Tips (from Kevin's workflow)
+1. **Let Claude iterate**: Give sample data/test criteria, let it work autonomously
+2. **Use planning mode**: For complex tasks, let Claude plan before coding
+3. **Provide success criteria**: "Success = QA passes with 450K users, 0 duplicates"
+4. **Reference architecture docs**: "See pipeline_architecture.md for scoring algorithm"
+
+### Anti-Patterns (avoid these)
+```
+❌ "Fix it" (too vague)
+❌ "Make it faster" (no specific metric)
+❌ "Change the algorithm" (which part?)
+✓ "Reduce bytes scanned in Step 1 by 50%"
+✓ "Add a filter to exclude SKUs under $100"
 ```
