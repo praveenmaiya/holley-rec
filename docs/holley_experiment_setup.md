@@ -15,6 +15,9 @@ A stakeholder-friendly explanation of the Holley post-purchase email experiment 
 | What is "Personalized"? | Vehicle-specific parts recommendations for users with YMM data |
 | What does "2.5x open rate" mean? | Personalized emails are opened 2.5x more than Static emails |
 | Is this a fair comparison? | Partially — see [Caveats](#caveats-and-limitations) below |
+| Why 2 arms (Random + Bandit)? | Random provides stable baseline for comparison; 50/50 split failed — see [Why Two Arms?](#why-two-arms-deep-dive) |
+| Can we go 100% Bandit? | **No** — we need a baseline holdout. See [Can We Remove the Random Arm?](#can-we-remove-the-random-arm) |
+| Do YMM users get Static emails? | **Yes** — ~969 users received both types over 60 days. See [User Overlap](#user-overlap-analysis) |
 
 ---
 
@@ -43,7 +46,7 @@ A stakeholder-friendly explanation of the Holley post-purchase email experiment 
                                     ▼
                     ┌───────────────────────────────┐
                     │      ARM ASSIGNMENT           │
-                    │         (50/50)               │
+                    │  (50/50 current → 10/90 rec)  │
                     └───────────────┬───────────────┘
                                     │
                  ┌──────────────────┴──────────────────┐
@@ -65,6 +68,164 @@ A stakeholder-friendly explanation of the Holley post-purchase email experiment 
                     │     (Personalized or Static)  │
                     └───────────────────────────────┘
 ```
+
+---
+
+## Why Two Arms? Deep Dive
+
+Understanding why we need both Random and Bandit arms is critical for experiment design.
+
+### The Purpose of Each Arm
+
+| Aspect | Random Arm (10% recommended) | Bandit Arm (90% recommended) |
+|--------|------------------------------|------------------------------|
+| **Model ID** | 1 (baseline) | 195001001 |
+| **Algorithm** | Boost-weighted random | Thompson Sampling |
+| **Purpose** | Stable baseline for comparison | Exploration + learning |
+| **Scores** | 0.5–0.9 (high) | 0.05–0.18 (low) |
+| **Behavior** | Deterministic from boost factors | Adapts based on CTR |
+
+### Why NOT 100% Bandit?
+
+1. **No reference baseline** — Without Random arm, we can't measure if Bandit is improving
+2. **Single point of failure** — If Bandit breaks, all traffic is affected
+3. **Score mismatch** — Bandit model produces scores ~10x lower than baseline (0.05 vs 0.5)
+4. **Slower learning** — Signal spread across 100% traffic vs concentrated in 10%
+5. **No cold-start baseline** — New treatments need Random arm for initial data
+
+### The 50/50 Experiment Failure (Jan 14, 2026)
+
+When traffic was split 50/50 between arms, we observed:
+
+| Metric | Before | After (50/50) | Impact |
+|--------|--------|---------------|--------|
+| **CTR** | 3.15% | 0% | **Crashed** |
+| Personalized sends | High | Near zero | Model favored low-boost treatments |
+| User experience | Stable | Inconsistent | Different treatments for same user |
+
+**Root cause:** The 50/50 split diluted the learning signal across both arms. Neither arm had enough concentrated traffic to optimize effectively.
+
+**Recommendation:** Use 10/90 split (10% Random / 90% Bandit) — enough baseline for comparison while maximizing Bandit learning.
+
+---
+
+## Can We Remove the Random Arm?
+
+**Short answer: No.**
+
+### What We'd Lose
+
+| Capability | Without Random Arm |
+|------------|-------------------|
+| Baseline measurement | ❌ No reference point for improvement |
+| Failure recovery | ❌ 100% traffic affected by Bandit bugs |
+| A/B comparisons | ❌ Can't compare algorithms |
+| Score normalization | ❌ Bandit scores not calibrated to baseline |
+
+### Recommended Configuration
+
+| Configuration | Random | Bandit | Use Case |
+|---------------|--------|--------|----------|
+| **Recommended** | 10% | 90% | Maximize learning with baseline holdout |
+| **Conservative** | 5% | 95% | Minimal baseline, maximum learning |
+| ❌ **Avoid** | 50% | 50% | Caused CTR crash — dilutes signal |
+| ❌ **Never** | 0% | 100% | No baseline for comparison |
+
+---
+
+## User Overlap Analysis
+
+**Key finding: YMM-eligible users DO receive both Personalized and Static treatments.**
+
+### Overlap Statistics
+
+| Study | Time Period | Users Receiving Both |
+|-------|-------------|---------------------|
+| Post Purchase Analysis | 60 days | **969 users** |
+| Uplift Analysis | 60 days | **480 users** |
+| Unbiased CTR Analysis | 14 days | **428 users** |
+
+### Why Overlap Exists
+
+Even with 100:1 boost factor, users can receive both treatment types because:
+
+1. **Multiple email opportunities** — Same user may receive multiple post-purchase emails
+2. **Randomization** — Even 1% chance means some Static selection over many emails
+3. **Arm assignment varies** — User may be in Random arm (99% Personalized) one day, Bandit arm (CTR-based) another
+4. **Treatment availability** — If a Personalized treatment is paused, user falls back to Static
+
+### Selection Ratio for Eligible Users
+
+For users with v1 YMM data (eligible for both types):
+
+| Treatment Type | Observed Selection | Theoretical (boost-weighted) |
+|----------------|-------------------|------------------------------|
+| **Personalized** | ~83% | 99% |
+| **Static** | ~17% | 1% |
+| **Ratio** | ~5:1 | 100:1 |
+
+The observed ratio differs from theoretical because:
+- Bandit arm uses CTR, not just boost factors
+- Multiple treatments with different boosts compete
+- Some Personalized treatments may be paused
+
+### Value of Within-User Comparison
+
+Users receiving both types enable the **cleanest possible comparison**:
+
+| Metric | Personalized | Static | Lift |
+|--------|--------------|--------|------|
+| Open Rate | 35.1% | 28.0% | **+7.1 pp** |
+| CTR | 4.2% | 3.1% | +1.1 pp |
+
+This controls for user-level confounds (engagement, email habits, customer value).
+
+---
+
+## Selection Logic Deep Dive
+
+### Boost Factor Math
+
+For users eligible for both treatment types, selection probability is:
+
+```
+P(treatment) = boost(treatment) / Σ boost(all eligible treatments)
+```
+
+**Example: 1 Personalized (boost=100) vs 1 Static (boost=1)**
+
+```
+P(Personalized) = 100 / (100 + 1) = 99.0%
+P(Static)       = 1 / (100 + 1)   = 1.0%
+```
+
+**Example: 10 Personalized (boost=100 each) vs 1 Static (boost=1)**
+
+```
+Total Personalized boost = 10 × 100 = 1000
+Total Static boost       = 1 × 1    = 1
+
+P(any Personalized) = 1000 / (1000 + 1) = 99.9%
+P(Static)           = 1 / (1000 + 1)    = 0.1%
+```
+
+### Why YMM Users Sometimes Get Static
+
+Despite 100:1 boost, Static selection happens because:
+
+1. **Randomization** — Even 0.1% chance means some Static emails over many sends
+2. **Bandit exploration** — Thompson Sampling may select Static to gather data
+3. **Treatment unavailability** — If all Personalized treatments are paused or exhausted
+4. **Multiple Static treatments** — More Static options means higher combined probability
+
+### Arm-Specific Selection Behavior
+
+| Arm | Selection Method | YMM User Behavior |
+|-----|------------------|-------------------|
+| **Random** | Pure boost-weighted | ~99% Personalized, ~1% Static |
+| **Bandit** | CTR + exploration | Varies based on historical performance |
+
+In Bandit arm, if Static treatment has higher CTR (unlikely but possible), it may be selected more often than boost factors would suggest.
 
 ---
 
@@ -113,21 +274,25 @@ Despite having 22 Static treatments configured, **only 1 has ever sent emails**:
 
 The arms determine **HOW** a treatment is selected, not **WHICH TYPE** is selected.
 
-| Arm | ID | Traffic | Selection Method |
-|-----|----|---------|--------------------|
-| **Random** | 4103 | 50% | Boost-weighted random (deterministic) |
-| **Bandit** | 4689 | 50% | Thompson Sampling (learns from CTR) |
+| Arm | ID | Current Traffic | Recommended | Selection Method |
+|-----|----|-----------------|-------------|------------------|
+| **Random** | 4103 | 50% | **10%** | Boost-weighted random (deterministic) |
+| **Bandit** | 4689 | 50% | **90%** | Thompson Sampling (learns from CTR) |
+
+> ⚠️ **Note:** The 50/50 split caused a CTR crash on Jan 14, 2026. See [Why Two Arms?](#why-two-arms-deep-dive) for details. Recommended: 10% Random / 90% Bandit.
 
 ### Random Arm
 - Uses boost factors as weights
 - Personalized (boost=100) is 100x more likely than Static (boost=1)
 - No learning — consistent baseline
+- **Purpose:** Stable reference point for measuring improvement
 
 ### Bandit Arm
 - Uses historical CTR to select treatments
 - Explores underperforming treatments
 - Exploits high-performing treatments
 - Adapts over time
+- **Purpose:** Learning and optimization (but scores are ~10x lower than baseline)
 
 **Both arms can serve both Personalized AND Static treatments.** The arm determines the selection algorithm, not the treatment type.
 
@@ -338,4 +503,5 @@ WITH user_both AS (
 
 | Date | Change |
 |------|--------|
+| 2026-02-03 | Added deep-dive sections: Why Two Arms?, User Overlap Analysis, Selection Logic |
 | 2026-02-03 | Initial documentation for stakeholder communication |
