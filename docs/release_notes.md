@@ -1,5 +1,65 @@
 # Holley Recommendations - Release Notes
 
+## V5.18 (January 30, 2026)
+
+**Dataset**: `auxia-reporting.temp_holley_v5_18`
+**Script**: `sql/recommendations/v5_18_revenue_ab_test.sql`
+
+### Summary
+
+Revenue A/B test pipeline with reserved slot allocation (2 fitment + 2 universal) and engagement tier classification for post-hoc analysis.
+
+### Purpose
+
+One-time email blast A/B test to prove personalized recs drive revenue. We control audience selection. Contract depends on it.
+
+### Changes from V5.17
+
+| Parameter | V5.17 | V5.18 | Why |
+|-----------|-------|-------|-----|
+| `max_parttype_per_user` | 999 | **2** | Force category diversity (28.5% concentration in 3 PartTypes) |
+| `max_universal_products` | 500 | **1000** | Broader discovery, more categories covered |
+| Slot allocation | Best 4 overall | **2 fitment + 2 universal** | Guarantee vehicle-specific + popular items |
+| Output columns | Standard | **+ engagement_tier, fitment_count** | Post-hoc revenue analysis by segment |
+
+### NOT Changed
+
+- Intent weights (20/10/2) -- removing was -34%
+- 3-tier popularity fallback -- v5.17's best feature
+- Sep 1 boundary, variant dedup, commodity exclusions
+- $50 price floor
+
+### Reserved Slot Logic
+
+1. Rank fitment candidates per user -> take top 2
+2. Rank universal candidates per user -> take top 2
+3. Backfill if either pool has <2 (e.g., 1 fitment -> 3 universal)
+4. Final 4 ordered: fitment first, then universal
+
+### New Tables
+
+| Table | Purpose |
+|-------|---------|
+| `audience_qualified` | Users classified by engagement tier (hot/warm/cold) |
+
+### New Columns in Output
+
+| Column | Values |
+|--------|--------|
+| `engagement_tier` | 'hot', 'warm', or 'cold' |
+| `fitment_count` | 0-4 (count of fitment recs per user) |
+
+### Validation Criteria
+
+- >= 400K users
+- 0 duplicates
+- Prices >= $50
+- No user has >2 of same PartType
+- Most users have fitment_count = 2
+- Category coverage >= 400 unique PartTypes (up from 322)
+
+---
+
 ## V5.17 (January 7, 2026)
 
 **Dataset**: `auxia-reporting.temp_holley_v5_17`

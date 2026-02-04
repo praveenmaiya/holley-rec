@@ -1,6 +1,6 @@
 -- Holley Recommendations QA Validation Queries
 -- Run these checks after pipeline execution to validate data quality
--- Dataset: auxia-reporting.temp_holley_v5_7
+-- Dataset: auxia-reporting.temp_holley_v5_7 (or temp_holley_v5_18 for v5.18)
 
 -- ============================================================================
 -- QUICK HEALTH CHECK (run first)
@@ -192,6 +192,60 @@ SELECT
   MAX(parttype_count) as max_same_parttype,
   COUNTIF(parttype_count > 2) as violations
 FROM user_parttype_counts;
+
+
+-- ============================================================================
+-- CHECK 7b: V5.18 Reserved Slot Distribution
+-- ============================================================================
+-- Expected: Most users have fitment_count = 2
+-- Only run against v5.18 dataset
+SELECT
+  'v5.18_reserved_slots' AS check_name,
+  COUNTIF(fitment_count = 0) AS fitment_0,
+  COUNTIF(fitment_count = 1) AS fitment_1,
+  COUNTIF(fitment_count = 2) AS fitment_2,
+  COUNTIF(fitment_count = 3) AS fitment_3,
+  COUNTIF(fitment_count = 4) AS fitment_4,
+  ROUND(AVG(fitment_count), 2) AS avg_fitment_count
+FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
+
+
+-- ============================================================================
+-- CHECK 7c: V5.18 Engagement Tier Distribution
+-- ============================================================================
+SELECT
+  'v5.18_engagement_tiers' AS check_name,
+  COUNTIF(engagement_tier = 'hot') AS hot_users,
+  COUNTIF(engagement_tier = 'warm') AS warm_users,
+  COUNTIF(engagement_tier = 'cold') AS cold_users,
+  COUNT(*) AS total_users
+FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
+
+
+-- ============================================================================
+-- CHECK 7d: V5.18 Category Coverage
+-- ============================================================================
+-- Expected: >= 400 unique PartTypes (up from 322 in v5.17)
+WITH all_skus AS (
+  SELECT rec_part_1 AS sku FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  UNION DISTINCT
+  SELECT rec_part_2 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  UNION DISTINCT
+  SELECT rec_part_3 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  UNION DISTINCT
+  SELECT rec_part_4 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+)
+SELECT
+  COUNT(DISTINCT cat.PartType) AS unique_part_types,
+  CASE WHEN COUNT(DISTINCT cat.PartType) >= 400 THEN 'OK'
+       ELSE 'WARNING: Low category coverage'
+  END AS status
+FROM all_skus s
+LEFT JOIN (
+  SELECT UPPER(TRIM(PartNumber)) AS PartNumber, MAX(PartType) AS PartType
+  FROM `auxia-gcp.data_company_1950.import_items`
+  GROUP BY PartNumber
+) cat ON s.sku = cat.PartNumber;
 
 
 -- ============================================================================
