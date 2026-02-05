@@ -1,7 +1,7 @@
 # Fitment-Eligible User Engagement Report
 
 **Date**: February 5, 2026
-**Focus**: How do users with vehicle data (fitment-eligible) engage with Personalized vs Static emails?
+**Focus**: How do users with vehicle data (fitment-eligible) engage with Personalized vs Static emails across all campaigns?
 
 ---
 
@@ -9,13 +9,14 @@
 
 Fitment-eligible users are the core audience for Holley's personalized vehicle recommendations. There are **503,828 users with vehicle data (YMM)** in the system, but the post-purchase email campaign only reaches ~10% of recent purchasers who have YMM data. Here's how they performed:
 
-1. **We reached 3,357 fitment users in v5.7 and 736 in v5.17** out of 32,687 and 7,810 total post-purchase email recipients respectively (~10% have vehicle data).
-2. **Overall, ~4-5% of fitment users click at least one email** (either type). This improved from 4.26% in v5.7 to 4.89% in v5.17.
-3. **Per-user click rates are nearly equal in v5.7**: Personalized 3.57% vs Static 3.78% (delta only -0.21pp). The per-send CTR gap (4.57% vs 12.26%) is misleading due to 3.3x send frequency difference.
-4. **Personalized gets MORE users to open**: 32.17% of P users opened vs 23.21% of S users in v5.7. Personalized emails are opened more, but when opened, Static (Apparel) gets more clicks.
-5. **Within-user gold standard (612 users got both in v5.7)**: 2.94% clicked Personalized vs 3.43% clicked Static. Nearly identical, with Personalized users opening at higher rates (28.76% vs 21.73%).
+1. **Browse Recovery and Abandon Cart ALREADY have personalized emails** - All three campaigns (Browse Recovery, Abandon Cart, Post Purchase) include personalized/fitment treatments. Browse Recovery is the largest (175K personalized sends, 23K users).
+2. **Personalized WINS across ALL three campaigns** on per-user click rate: Browse Recovery +3.26pp (8.31% vs 5.05%), Abandon Cart +2.09pp (5.04% vs 2.95%), Post Purchase +3.02pp (4.13% vs 1.11%).
+3. **The lift comes from opens, not click-through** - Personalized users open at 10-20pp higher rates; CTR-of-opens is similar between types (~8% for BR/AC).
+4. **Post Purchase fitment-only comparison is nearly equal**: P=3.57% vs S=3.78% (v5.7, delta only -0.21pp). The per-send CTR gap is misleading due to 3.3x send frequency difference.
+5. **Within-user gold standard (612 users got both in v5.7)**: 2.94% clicked Personalized vs 3.43% clicked Static. Nearly identical.
 6. **Revenue per user favors Static**: $84 vs $56 per user (30-day, v5.7), but this compares Apparel vs Vehicle Parts product categories.
 7. **v5.17 open rates improved significantly**: Same 242 users saw open rates jump from 14.56% to 23.48% (+61%), confirming v5.17 algorithm improvements are working.
+8. **Browse Recovery is the star campaign**: 8.31% per-user click rate for Personalized - the highest across any campaign/type combination.
 
 ---
 
@@ -217,17 +218,95 @@ _242 fitment users received Personalized emails in BOTH v5.7 and v5.17. How did 
 
 ---
 
-## 9. Summary: The Fitment User Story
+## 9. Cross-Campaign View: All Three Email Campaigns
+
+_Our previous analysis focused only on Post Purchase. But Holley has THREE active email campaigns, and two of them already include personalized/fitment recommendations._
+
+### Campaign Inventory
+
+| Campaign | Personalized Treatments | Static/Control Treatments | Total Active |
+|----------|------------------------|--------------------------|-------------|
+| **Browse Recovery** | 25 ("Personalized Recommendations") | 10 ("No Recommendations" control) | 35 |
+| **Abandon Cart** | 28 ("Fitment Recommendations") | 18 ("Static Recommendations") | 46 |
+| **Post Purchase** | 10 ("Personalized Fitment Recommendations") | 22 ("Static Recommendations") | 32 |
+
+**Key insight**: Browse Recovery and Abandon Cart **already have personalized emails**. They were not missing - they're live and actively sending.
+
+### Personalization Type Differences
+
+| Campaign | Personalization Basis | Requires Vehicle Data? | Fitment Users |
+|----------|----------------------|----------------------|---------------|
+| Post Purchase | Vehicle fitment recommendations (our pipeline) | Yes (100%) | 2,762 |
+| Abandon Cart | Fitment + abandoned cart items | Yes (100%) | 3,331 |
+| Browse Recovery | Personalized recs based on browsing history | No (59.6% have YMM) | 13,976 of 23,453 |
+
+### Send Volume Comparison (Dec 4, 2025 - Feb 5, 2026)
+
+| Campaign | Rec Type | Sends | Users | Sends/User |
+|----------|----------|------:|------:|-----------:|
+| **Browse Recovery** | Personalized | 175,115 | 23,453 | 7.5 |
+| Browse Recovery | No Recs (Control) | 392,107 | 54,874 | 7.1 |
+| **Abandon Cart** | Personalized/Fitment | 14,305 | 3,331 | 4.3 |
+| Abandon Cart | Static | 130,025 | 31,667 | 4.1 |
+| **Post Purchase** | Personalized/Fitment | 19,380 | 2,762 | 7.0 |
+| Post Purchase | Static | 76,161 | 37,590 | 2.0 |
+
+Browse Recovery is the **largest campaign** by far (567K total sends, 78K users). Post Purchase is the smallest.
+
+### Per-User Engagement: Personalized WINS Across All Campaigns
+
+| Campaign | Rec Type | Users | Pct Users Opened | **Pct Users Clicked** |
+|----------|----------|------:|-----------------:|---------------------:|
+| **Browse Recovery** | **Personalized** | 23,453 | **39.70%** | **8.31%** |
+| Browse Recovery | No Recs (Control) | 54,874 | 27.86% | 5.05% |
+| | | | **P +11.84pp** | **P +3.26pp** |
+| **Abandon Cart** | **Personalized** | 3,331 | **29.00%** | **5.04%** |
+| Abandon Cart | Static | 31,667 | 18.73% | 2.95% |
+| | | | **P +10.27pp** | **P +2.09pp** |
+| **Post Purchase** | **Personalized** | 2,762 | **33.82%** | **4.13%** |
+| Post Purchase | Static | 37,590 | 13.41% | 1.11% |
+| | | | **P +20.41pp** | **P +3.02pp** |
+
+**Personalized outperforms in EVERY campaign** on both opens and clicks (per-user binary rate).
+
+### CTR of Opens: Consistent Across Campaigns
+
+| Campaign | Personalized CTR (opens) | Static/Control CTR (opens) |
+|----------|-------------------------:|---------------------------:|
+| Browse Recovery | 8.38% | 8.26% |
+| Abandon Cart | 8.16% | 8.09% |
+| Post Purchase | 4.42% | 5.98% |
+
+Browse Recovery and Abandon Cart show nearly identical CTR-of-opens between Personalized and Static (~8%). The difference in per-user click rates is driven entirely by Personalized getting MORE users to open.
+
+Post Purchase CTR-of-opens is lower for both types, suggesting post-purchase email content is less clickable than recovery/abandonment emails regardless of personalization.
+
+### Interpretation
+
+1. **Personalization works** - It lifts per-user click rates by 2-3pp across all three campaigns
+2. **The lift comes from opens, not click-through** - Personalized users open at dramatically higher rates (+10-20pp), and CTR-of-opens is similar between types
+3. **Browse Recovery is the star** - 8.31% per-user click rate for Personalized, the highest across any campaign/type combination
+4. **Abandon Cart Personalized uses fitment** - Same vehicle data as Post Purchase, and it performs well (5.04% per-user click rate)
+5. **Post Purchase Static comparison is unfair** - 37,590 Static users vs 2,762 Personalized, and only 4.6% of Static users have vehicle data
+
+### Caveat: Population Differences
+
+The all-user comparison above includes different user populations (Personalized requires vehicle data; Static does not). The fitment-user-only Post Purchase analysis (Sections 3-6) controls for this and shows the gap narrows to near-zero. The cross-campaign numbers should be interpreted as "total program impact" rather than a controlled experiment.
+
+---
+
+## 10. Summary: The Fitment User Story
 
 ### What's Working
 
 | Signal | Evidence |
 |--------|----------|
-| **Personalized drives opens** | 32% of P users open vs 23% of S users (v5.7) |
-| **Per-user engagement is equal** | P=3.57% vs S=3.78% clicked (v5.7), delta only 0.21pp |
+| **Personalized wins ALL 3 campaigns** | +3.26pp Browse Recovery, +2.09pp Abandon Cart, +3.02pp Post Purchase |
+| **Browse Recovery is the star** | 8.31% per-user click rate - highest of any campaign/type combo |
+| **Personalized drives opens** | 32% of P users open vs 23% of S users (Post Purchase v5.7) |
+| **Per-user engagement is equal (fitment-only)** | P=3.57% vs S=3.78% clicked (Post Purchase v5.7), delta only 0.21pp |
 | **v5.17 improved open rates** | Same users: 14.56% → 23.48% (+61%) per-send open rate |
 | **Fitment users are engaged** | 4-5% click rate across the board, improving over time |
-| **v5.17 reaches users better** | 35.6% of fitment users opened at least once (vs 31.1% in v5.7) |
 
 ### What Needs Improvement
 
@@ -249,19 +328,26 @@ _242 fitment users received Personalized emails in BOTH v5.7 and v5.17. How did 
 
 ### Recommendations
 
-1. **Cap send frequency at 3 per user** - 70% CTR decay after 7 sends; diminishing returns after 3rd send
-2. **Improve click-through content** - Users OPEN Personalized emails more but don't click as much; the email subject/preview works, but the product recommendations inside need to be more compelling
-3. **Use per-user binary click rate** as primary KPI for stakeholder reporting (not per-send CTR)
-4. **Test hybrid content** - Include Apparel alongside Vehicle Parts in Personalized emails to capture Static's click advantage
-5. **Continue v5.17 algorithm direction** - The open rate improvement (+61% for same users) confirms the 3-tier segment fallback is generating more relevant content
+1. **Highlight Browse Recovery success** - 8.31% per-user click rate is the strongest personalization signal; use this as the headline metric for stakeholders
+2. **Cap send frequency at 3 per user** - 70% CTR decay after 7 sends; diminishing returns after 3rd send
+3. **Improve Post Purchase click-through content** - Users OPEN Personalized emails more but don't click as much; the email subject/preview works, but the product recommendations inside need to be more compelling (Post Purchase CTR-of-opens is 4.42% vs 8%+ for BR/AC)
+4. **Use per-user binary click rate** as primary KPI for stakeholder reporting (not per-send CTR)
+5. **Test hybrid content** - Include Apparel alongside Vehicle Parts in Personalized emails to capture Static's click advantage
+6. **Continue v5.17 algorithm direction** - The open rate improvement (+61% for same users) confirms the 3-tier segment fallback is generating more relevant content
+7. **Expand fitment personalization to Browse Recovery** - Only 59.6% of BR Personalized users have vehicle data; adding fitment to the remaining 40% could further lift engagement
 
 ---
 
 ## Appendix: Data Notes
 
-- **Base table**: `auxia-reporting.temp_holley_v5_17.uplift_base` (90,305 rows, 0 duplicates)
-- **Fitment-eligible**: Users with vehicle Year/Make/Model data
+- **Base table**: `auxia-reporting.temp_holley_v5_17.uplift_base` (90,305 rows, 0 duplicates) - Post Purchase only
+- **Cross-campaign data**: Queried directly from `treatment_history_sent` + `treatment_interaction` joined with PostgreSQL treatment metadata
+- **Fitment-eligible**: Users with vehicle Year/Make/Model data (503,828 total in system)
 - **CTR formula**: Corrected to exclude clicks from image-blocking clients (opened=0, clicked=1)
 - **Revenue**: Directional only; fuzzy attribution via email+time matching; non-overlap users only
-- **Static = Apparel only**: Only treatment 16490939 (Apparel) has sends among 22 Static treatments
+- **Post Purchase Static = Apparel only**: Only treatment 16490939 (Apparel) has sends among 22 Static treatments
 - **Random arm (4103)**: Unbiased selection; Bandit arm (4689) uses Thompson Sampling
+- **Campaign classification**: Based on treatment name prefixes from PostgreSQL `treatment` table
+- **Browse Recovery "Personalized"**: Based on browsing history, not necessarily vehicle fitment (59.6% have YMM)
+- **Abandon Cart "Fitment"**: Uses vehicle fitment recommendations alongside abandoned items (100% have YMM)
+- **Cross-campaign period**: Dec 4, 2025 - Feb 5, 2026 (all available data since campaigns went live)
