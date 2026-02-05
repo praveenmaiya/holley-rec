@@ -23,6 +23,8 @@ DECLARE v57_end DATE DEFAULT '2026-01-09';
 DECLARE v517_start DATE DEFAULT '2026-01-10';
 DECLARE v517_end DATE DEFAULT '2026-02-04';
 DECLARE crash_date DATE DEFAULT '2026-01-14';
+-- P2 fix: Extend interaction window 7 days past send window to capture delayed opens/clicks
+DECLARE interaction_end DATE DEFAULT '2026-02-11';
 
 -- Personalized Fitment treatment IDs (10)
 -- Source of truth: configs/personalized_treatments.csv
@@ -98,19 +100,21 @@ sends AS (
 ),
 
 -- Opens (VIEWED)
+-- P2 fix: Use interaction_end to capture delayed opens for late-window sends
 views AS (
   SELECT DISTINCT treatment_tracking_id
   FROM `auxia-gcp.company_1950.treatment_interaction`
   WHERE interaction_type = 'VIEWED'
-    AND DATE(interaction_timestamp_micros) BETWEEN v57_start AND v517_end
+    AND DATE(interaction_timestamp_micros) BETWEEN v57_start AND interaction_end
 ),
 
 -- Clicks (CLICKED)
+-- P2 fix: Use interaction_end to capture delayed clicks for late-window sends
 clicks AS (
   SELECT DISTINCT treatment_tracking_id
   FROM `auxia-gcp.company_1950.treatment_interaction`
   WHERE interaction_type = 'CLICKED'
-    AND DATE(interaction_timestamp_micros) BETWEEN v57_start AND v517_end
+    AND DATE(interaction_timestamp_micros) BETWEEN v57_start AND interaction_end
 )
 
 SELECT

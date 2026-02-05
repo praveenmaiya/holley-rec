@@ -14,7 +14,7 @@ Five key findings:
 2. **MECE result**: Among fitment-eligible users in v5.17 period (excl crash), Personalized achieves 5.59% CTR vs Static 0% (but Static only has 19 opens - low sample).
 3. **Within-user result**: Among 612 overlap users (v5.7 only), 3.43% clicked Static vs 2.94% clicked Personalized (delta -0.49pp). No v5.17 overlap due to different user populations.
 4. **DiD estimate**: v5.17 deployment improved Personalized by +13.13pp more than Static (but Static v5.17 sample is tiny - interpret with caution).
-5. **Revenue signal**: Personalized users generate $85.08 revenue/user (30d) vs Static $35.76 in v5.7 - 2.4x higher despite lower CTR!
+5. **Revenue signal** (corrected): Among fitment-eligible users, Personalized $121/user vs Static $115/user in v5.7 - only 1.06x higher (not 2.4x as initially reported with biased population).
 
 ---
 
@@ -176,31 +176,37 @@ _The most important finding for contract renewal._
 
 _Revenue uses fuzzy email+time matching against order events. Treat as directional signal, not causal proof._
 
-### 7-Day Attribution
+**IMPORTANT**: Results below filter to **fitment-eligible users only** for fair population comparison. Uses SUM (not MAX) to capture multiple same-day orders.
+
+### 7-Day Attribution (Fitment-Eligible Only)
 
 | Period | Treatment | Users | Buyers | Conv Rate | Revenue | Rev/User |
 |--------|-----------|-------|--------|-----------|---------|----------|
-| v5.7 | Personalized | 2,409 | 228 | **9.46%** | $127,963 | **$53.12** |
-| v5.7 | Static | 30,890 | 1,388 | 4.49% | $659,783 | $21.36 |
-| v5.17 | Personalized | 279 | 17 | 6.09% | $4,761 | $17.07 |
-| v5.17 | Static | 1,778 | 86 | 4.84% | $27,542 | $15.49 |
+| v5.7 | Personalized | 2,409 | 228 | 9.46% | $171,752 | $71.30 |
+| v5.7 | Static | 1,560 | 127 | 8.14% | $91,286 | $58.52 |
+| v5.17 | Personalized | 279 | 17 | 6.09% | $5,558 | $19.92 |
+| v5.17 | Static | 47 | 2 | 4.26% | $2,253 | $47.94 |
 
-### 30-Day Attribution
+### 30-Day Attribution (Fitment-Eligible Only)
 
 | Period | Treatment | Users | Buyers | Conv Rate | Revenue | Rev/User |
 |--------|-----------|-------|--------|-----------|---------|----------|
-| v5.7 | Personalized | 2,409 | 330 | **13.70%** | $204,947 | **$85.08** |
-| v5.7 | Static | 30,890 | 2,159 | 6.99% | $1,104,664 | $35.76 |
-| v5.17 | Personalized | 279 | 22 | 7.89% | $7,545 | $27.04 |
-| v5.17 | Static | 1,778 | 129 | 7.26% | $48,228 | $27.12 |
+| v5.7 | Personalized | 2,409 | 330 | 13.70% | $292,233 | $121.31 |
+| v5.7 | Static | 1,560 | 205 | 13.14% | $178,962 | $114.72 |
+| v5.17 | Personalized | 279 | 22 | 7.89% | $9,113 | $32.66 |
+| v5.17 | Static | 47 | 6 | 12.77% | $4,144 | $88.18 |
 
-**Key finding**: Even in v5.7 when Static had higher CTR, Personalized drove **2.4x more revenue per user** ($85 vs $36). This suggests Personalized users are higher-value buyers, even if they click less.
+**Key finding (corrected)**: With fair population comparison (fitment-eligible only):
+- **v5.7**: Personalized $121/user vs Static $115/user = **1.06x** (not 2.4x as initially reported)
+- **v5.17**: Static higher ($88 vs $33), but only 47 fitment-eligible Static users
+
+The initial 2.4x revenue advantage was an artifact of comparing fitment-eligible Personalized users against mostly non-fitment Static users (different populations).
 
 **Caveats**:
 - No causal link between email send and purchase (no true control)
 - Long consideration cycles for automotive parts
 - Revenue attribution is based on any order within window, not click-to-purchase tracking
-- Personalized users are by definition vehicle owners (may be higher spenders generally)
+- v5.17 Static sample is tiny (47 fitment-eligible users)
 
 ---
 
@@ -242,7 +248,7 @@ _Jan 14+ data excluded from primary analysis. Shown here for completeness._
 > "After deploying v5.17 segment-based recommendations, Personalized email engagement reversed from underperforming to outperforming Static content. In v5.7, Static CTR was 12.68% vs Personalized 5.15%. After v5.17, Personalized CTR improved while Static dropped to 0%."
 
 **Can claim with caveat:**
-> "Among 612 users who received both types in v5.7, Static had a slight edge (3.43% vs 2.94% clicked). Revenue per user was 2.4x higher for Personalized ($85 vs $36), but attribution is directional."
+> "Among 612 users who received both types in v5.7, Static had a slight edge (3.43% vs 2.94% clicked). Revenue per user was similar when comparing fitment-eligible populations ($121 vs $115), showing the algorithm change didn't sacrifice revenue."
 
 **Cannot claim:**
 > "Personalized recommendations generated $X more revenue" (attribution is directional only, and confounded by user population differences)

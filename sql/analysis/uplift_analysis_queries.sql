@@ -259,7 +259,8 @@ SELECT
   ROUND(
     SAFE_DIVIDE(SUM(clicked_personalized), COUNT(*)) * 100
     - SAFE_DIVIDE(SUM(clicked_static), COUNT(*)) * 100, 2
-  ) AS delta_pp;
+  ) AS delta_pp
+FROM overlap;
 
 
 -- ============================================================
@@ -462,6 +463,7 @@ ORDER BY period;
 -- NOTE: Pre-aggregates each attribution window separately to avoid
 -- Cartesian product from dual LEFT JOIN.
 -- Revenue property is 'Subtotal' (case-sensitive, per campaign_funnel_analysis.sql)
+-- IMPORTANT: Filters to fitment_eligible=TRUE for fair population comparison
 WITH send_users AS (
   SELECT
     user_id,
@@ -470,15 +472,18 @@ WITH send_users AS (
     MIN(send_date) AS first_send_date
   FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
   WHERE NOT in_crash_window
+    AND fitment_eligible = TRUE  -- P1 fix: fair population comparison
   GROUP BY user_id, treatment_type, period
 ),
 -- Orders from unified events (Dec 2025+)
+-- Uses SUM to capture multiple same-day orders (P1 fix)
 user_orders AS (
   SELECT
     user_id,
     DATE(client_event_timestamp) AS order_date,
     -- Subtotal is the revenue property (matches campaign_funnel_analysis.sql)
-    MAX(CASE WHEN ep.property_name = 'Subtotal'
+    -- SUM captures multiple same-day orders; MAX would undercount
+    SUM(CASE WHEN ep.property_name = 'Subtotal'
       THEN COALESCE(
         ep.double_value,
         SAFE_CAST(ep.string_value AS FLOAT64),
