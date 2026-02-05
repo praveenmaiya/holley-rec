@@ -9,6 +9,13 @@
 --   bq query --use_legacy_sql=false "QUERY"
 --
 -- Or copy-paste sections into BigQuery console.
+--
+-- CTR FORMULA FIX (2026-02-05):
+-- All CTR-of-opens calculations now use:
+--   SUM(CASE WHEN opened=1 AND clicked=1 THEN 1 ELSE 0 END) / SUM(opened)
+-- instead of SUM(clicked)/SUM(opened), which inflated CTR by including
+-- clicks from image-blocking email clients (clicked=1 but opened=0).
+-- Impact: ~19 phantom clicks removed (~0.5-0.9pp correction on Personalized).
 -- ============================================================
 
 
@@ -50,7 +57,7 @@ SELECT
   COUNT(*) AS sends,
   SUM(opened) AS opens,
   SUM(clicked) AS clicks,
-  ROUND(SAFE_DIVIDE(SUM(clicked), SUM(opened)) * 100, 2) AS ctr_of_opens_pct
+  ROUND(SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), SUM(opened)) * 100, 2) AS ctr_of_opens_pct
 FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
 GROUP BY period, arm_id
 ORDER BY period, arm_id;
@@ -84,8 +91,8 @@ SELECT
   SUM(opened) AS opens,
   SUM(clicked) AS clicks,
   ROUND(SAFE_DIVIDE(SUM(opened), COUNT(*)) * 100, 2) AS open_rate_pct,
-  ROUND(SAFE_DIVIDE(SUM(clicked), SUM(opened)) * 100, 2) AS ctr_of_opens_pct,
-  ROUND(SAFE_DIVIDE(SUM(clicked), COUNT(*)) * 100, 2) AS ctr_of_sends_pct
+  ROUND(SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), SUM(opened)) * 100, 2) AS ctr_of_opens_pct,
+  ROUND(SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), COUNT(*)) * 100, 2) AS ctr_of_sends_pct
 FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
 WHERE fitment_eligible = TRUE
 GROUP BY period, treatment_type
@@ -98,8 +105,8 @@ WITH mece_stats AS (
     period,
     treatment_type,
     SUM(opened) AS n,
-    SUM(clicked) AS k,
-    SAFE_DIVIDE(SUM(clicked), SUM(opened)) AS p_hat
+    SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END) AS k,
+    SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), SUM(opened)) AS p_hat
   FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
   WHERE fitment_eligible = TRUE
   GROUP BY period, treatment_type
@@ -128,7 +135,7 @@ SELECT
   SUM(opened) AS opens,
   SUM(clicked) AS clicks,
   ROUND(SAFE_DIVIDE(SUM(opened), COUNT(*)) * 100, 2) AS open_rate_pct,
-  ROUND(SAFE_DIVIDE(SUM(clicked), SUM(opened)) * 100, 2) AS ctr_of_opens_pct
+  ROUND(SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), SUM(opened)) * 100, 2) AS ctr_of_opens_pct
 FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
 WHERE fitment_eligible = TRUE
 GROUP BY period, treatment_type, arm_id
@@ -153,11 +160,11 @@ WITH user_types AS (
     -- Personalized metrics
     SUM(CASE WHEN treatment_type = 'Personalized' THEN 1 ELSE 0 END) AS p_sends,
     SUM(CASE WHEN treatment_type = 'Personalized' THEN opened ELSE 0 END) AS p_opens,
-    SUM(CASE WHEN treatment_type = 'Personalized' THEN clicked ELSE 0 END) AS p_clicks,
+    SUM(CASE WHEN treatment_type = 'Personalized' AND opened = 1 AND clicked = 1 THEN 1 ELSE 0 END) AS p_clicks,
     -- Static metrics
     SUM(CASE WHEN treatment_type = 'Static' THEN 1 ELSE 0 END) AS s_sends,
     SUM(CASE WHEN treatment_type = 'Static' THEN opened ELSE 0 END) AS s_opens,
-    SUM(CASE WHEN treatment_type = 'Static' THEN clicked ELSE 0 END) AS s_clicks
+    SUM(CASE WHEN treatment_type = 'Static' AND opened = 1 AND clicked = 1 THEN 1 ELSE 0 END) AS s_clicks
   FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
   GROUP BY user_id, period
 )
@@ -271,8 +278,8 @@ WITH period_stats AS (
     SUM(opened) AS opens,
     SUM(clicked) AS clicks,
     SAFE_DIVIDE(SUM(opened), COUNT(*)) AS open_rate,
-    SAFE_DIVIDE(SUM(clicked), SUM(opened)) AS ctr_of_opens,
-    SAFE_DIVIDE(SUM(clicked), COUNT(*)) AS ctr_of_sends
+    SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), SUM(opened)) AS ctr_of_opens,
+    SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), COUNT(*)) AS ctr_of_sends
   FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
   WHERE fitment_eligible = TRUE
   GROUP BY period, treatment_type
@@ -317,8 +324,8 @@ WITH period_stats AS (
     period,
     treatment_type,
     SAFE_DIVIDE(SUM(opened), COUNT(*)) AS open_rate,
-    SAFE_DIVIDE(SUM(clicked), SUM(opened)) AS ctr_of_opens,
-    SAFE_DIVIDE(SUM(clicked), COUNT(*)) AS ctr_of_sends
+    SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), SUM(opened)) AS ctr_of_opens,
+    SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), COUNT(*)) AS ctr_of_sends
   FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
   WHERE fitment_eligible = TRUE
   GROUP BY period, treatment_type
@@ -364,7 +371,7 @@ WITH user_period AS (
     user_id,
     period,
     SUM(opened) AS opens,
-    SUM(clicked) AS clicks,
+    SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END) AS clicks,
     COUNT(*) AS sends
   FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
   WHERE treatment_type = 'Personalized'
@@ -426,7 +433,7 @@ FROM (
     treatment_type,
     COUNT(*) AS sends,
     SUM(opened) AS opens,
-    SUM(clicked) AS clicks
+    SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END) AS clicks
   FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
   WHERE fitment_eligible = TRUE
   GROUP BY period, treatment_type
@@ -653,3 +660,165 @@ UNION ALL
 SELECT
   'Orders removed by dedupe' AS metric,
   (SELECT COUNT(*) FROM orders_raw) - (SELECT COUNT(*) FROM orders_deduped) AS count;
+
+
+-- ============================================================
+-- 6. DIAGNOSTIC QUERIES (Added 2026-02-05)
+-- ============================================================
+-- Six queries investigating why Static/Apparel outperforms
+-- Personalized Vehicle Parts. Tests for: CTR formula bug,
+-- bandit selection bias, send frequency confound, email fatigue,
+-- first-send comparison, and data integrity.
+-- ============================================================
+
+-- 6a. Clicked-without-opened check (CTR formula validation)
+-- Quantifies clicks where opened=0 (image-blocking email clients)
+SELECT
+  treatment_type,
+  period,
+  COUNT(*) AS total_sends,
+  SUM(clicked) AS total_clicks,
+  SUM(CASE WHEN opened = 0 AND clicked = 1 THEN 1 ELSE 0 END) AS clicked_no_open,
+  SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END) AS clicked_with_open,
+  -- Old (buggy) CTR
+  ROUND(SAFE_DIVIDE(SUM(clicked), SUM(opened)) * 100, 2) AS old_ctr_pct,
+  -- Corrected CTR
+  ROUND(SAFE_DIVIDE(
+    SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END),
+    SUM(opened)
+  ) * 100, 2) AS corrected_ctr_pct
+FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
+WHERE fitment_eligible = TRUE
+GROUP BY treatment_type, period
+ORDER BY period, treatment_type;
+
+-- 6b. Random-arm-only MECE (eliminates bandit selection bias)
+-- If Static only wins in Bandit arm, it's selection bias
+SELECT
+  period,
+  treatment_type,
+  arm_id,
+  COUNT(*) AS sends,
+  COUNT(DISTINCT user_id) AS unique_users,
+  SUM(opened) AS opens,
+  SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END) AS clicks,
+  ROUND(SAFE_DIVIDE(SUM(opened), COUNT(*)) * 100, 2) AS open_rate_pct,
+  ROUND(SAFE_DIVIDE(
+    SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END),
+    SUM(opened)
+  ) * 100, 2) AS ctr_of_opens_pct,
+  ROUND(SAFE_DIVIDE(
+    SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END),
+    COUNT(*)
+  ) * 100, 2) AS ctr_of_sends_pct
+FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
+WHERE fitment_eligible = TRUE
+GROUP BY period, treatment_type, arm_id
+HAVING sends >= 10
+ORDER BY period, treatment_type, arm_id;
+
+-- 6c. Per-user binary click rate (eliminates send frequency bias)
+-- "What % of users clicked at least once?"
+SELECT
+  period,
+  treatment_type,
+  COUNT(DISTINCT user_id) AS total_users,
+  COUNT(DISTINCT CASE WHEN clicked = 1 THEN user_id END) AS users_who_clicked,
+  ROUND(SAFE_DIVIDE(
+    COUNT(DISTINCT CASE WHEN clicked = 1 THEN user_id END),
+    COUNT(DISTINCT user_id)
+  ) * 100, 2) AS pct_users_clicked,
+  COUNT(DISTINCT CASE WHEN opened = 1 THEN user_id END) AS users_who_opened,
+  ROUND(SAFE_DIVIDE(
+    COUNT(DISTINCT CASE WHEN opened = 1 THEN user_id END),
+    COUNT(DISTINCT user_id)
+  ) * 100, 2) AS pct_users_opened,
+  ROUND(COUNT(*) * 1.0 / COUNT(DISTINCT user_id), 1) AS avg_sends_per_user
+FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
+WHERE fitment_eligible = TRUE
+GROUP BY period, treatment_type
+ORDER BY period, treatment_type;
+
+-- 6d. First-send-only comparison (eliminates fatigue + novelty)
+WITH ranked_sends AS (
+  SELECT *,
+    ROW_NUMBER() OVER (
+      PARTITION BY user_id, treatment_type
+      ORDER BY treatment_sent_timestamp ASC
+    ) AS send_rank
+  FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
+  WHERE fitment_eligible = TRUE
+)
+SELECT
+  period,
+  treatment_type,
+  COUNT(*) AS first_sends,
+  COUNT(DISTINCT user_id) AS users,
+  SUM(opened) AS opens,
+  SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END) AS clicks,
+  ROUND(SAFE_DIVIDE(SUM(opened), COUNT(*)) * 100, 2) AS open_rate_pct,
+  ROUND(SAFE_DIVIDE(
+    SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END),
+    SUM(opened)
+  ) * 100, 2) AS ctr_of_opens_pct,
+  ROUND(SAFE_DIVIDE(
+    SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END),
+    COUNT(*)
+  ) * 100, 2) AS ctr_of_sends_pct
+FROM ranked_sends
+WHERE send_rank = 1
+GROUP BY period, treatment_type
+ORDER BY period, treatment_type;
+
+-- 6e. Send frequency vs CTR decay (email fatigue check)
+WITH ranked_sends AS (
+  SELECT *,
+    ROW_NUMBER() OVER (
+      PARTITION BY user_id, treatment_type
+      ORDER BY treatment_sent_timestamp ASC
+    ) AS send_rank
+  FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
+  WHERE fitment_eligible = TRUE
+    AND period = 'v5.7'  -- Largest sample
+),
+bucketed AS (
+  SELECT *,
+    CASE
+      WHEN send_rank = 1 THEN '1st send'
+      WHEN send_rank = 2 THEN '2nd send'
+      WHEN send_rank = 3 THEN '3rd send'
+      WHEN send_rank BETWEEN 4 AND 6 THEN '4th-6th send'
+      ELSE '7th+ send'
+    END AS send_bucket,
+    CASE
+      WHEN send_rank = 1 THEN 1
+      WHEN send_rank = 2 THEN 2
+      WHEN send_rank = 3 THEN 3
+      WHEN send_rank BETWEEN 4 AND 6 THEN 4
+      ELSE 7
+    END AS bucket_order
+  FROM ranked_sends
+)
+SELECT
+  treatment_type,
+  send_bucket,
+  bucket_order,
+  COUNT(*) AS sends,
+  SUM(opened) AS opens,
+  SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END) AS clicks,
+  ROUND(SAFE_DIVIDE(SUM(opened), COUNT(*)) * 100, 2) AS open_rate_pct,
+  ROUND(SAFE_DIVIDE(
+    SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END),
+    SUM(opened)
+  ) * 100, 2) AS ctr_of_opens_pct
+FROM bucketed
+GROUP BY treatment_type, send_bucket, bucket_order
+HAVING sends >= 10
+ORDER BY treatment_type, bucket_order;
+
+-- 6f. Tracking ID uniqueness verification
+SELECT
+  COUNT(*) AS total_rows,
+  COUNT(DISTINCT treatment_tracking_id) AS unique_tracking_ids,
+  COUNT(*) - COUNT(DISTINCT treatment_tracking_id) AS duplicates
+FROM `auxia-reporting.temp_holley_v5_17.uplift_base`;

@@ -8,6 +8,13 @@
 --   bq query --use_legacy_sql=false "QUERY"
 --
 -- Or copy-paste sections into BigQuery console.
+--
+-- CTR FORMULA FIX (2026-02-05):
+-- All CTR-of-opens calculations now use:
+--   SUM(CASE WHEN opened=1 AND clicked=1 THEN 1 ELSE 0 END) / SUM(opened)
+-- instead of SUM(clicked)/SUM(opened), which inflated CTR by including
+-- clicks from image-blocking email clients (clicked=1 but opened=0).
+-- Impact: ~19 phantom clicks removed (~0.5-0.9pp correction on Personalized).
 -- ============================================================
 
 
@@ -52,7 +59,7 @@ SELECT
   COUNT(*) AS sends,
   SUM(opened) AS opens,
   SUM(clicked) AS clicks,
-  ROUND(SAFE_DIVIDE(SUM(clicked), SUM(opened)) * 100, 2) AS ctr_of_opens_pct
+  ROUND(SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), SUM(opened)) * 100, 2) AS ctr_of_opens_pct
 FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
 GROUP BY period, arm_id, in_crash_window
 ORDER BY period, arm_id, in_crash_window;
@@ -87,8 +94,8 @@ SELECT
   SUM(opened) AS opens,
   SUM(clicked) AS clicks,
   ROUND(SAFE_DIVIDE(SUM(opened), COUNT(*)) * 100, 2) AS open_rate_pct,
-  ROUND(SAFE_DIVIDE(SUM(clicked), SUM(opened)) * 100, 2) AS ctr_of_opens_pct,
-  ROUND(SAFE_DIVIDE(SUM(clicked), COUNT(*)) * 100, 2) AS ctr_of_sends_pct
+  ROUND(SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), SUM(opened)) * 100, 2) AS ctr_of_opens_pct,
+  ROUND(SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), COUNT(*)) * 100, 2) AS ctr_of_sends_pct
 FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
 WHERE fitment_eligible = TRUE
   AND NOT in_crash_window
@@ -102,8 +109,8 @@ WITH mece_stats AS (
     period,
     treatment_type,
     SUM(opened) AS n,
-    SUM(clicked) AS k,
-    SAFE_DIVIDE(SUM(clicked), SUM(opened)) AS p_hat
+    SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END) AS k,
+    SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), SUM(opened)) AS p_hat
   FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
   WHERE fitment_eligible = TRUE
     AND NOT in_crash_window
@@ -133,7 +140,7 @@ SELECT
   SUM(opened) AS opens,
   SUM(clicked) AS clicks,
   ROUND(SAFE_DIVIDE(SUM(opened), COUNT(*)) * 100, 2) AS open_rate_pct,
-  ROUND(SAFE_DIVIDE(SUM(clicked), SUM(opened)) * 100, 2) AS ctr_of_opens_pct
+  ROUND(SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), SUM(opened)) * 100, 2) AS ctr_of_opens_pct
 FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
 WHERE fitment_eligible = TRUE
   AND NOT in_crash_window
@@ -160,11 +167,11 @@ WITH user_types AS (
     -- Personalized metrics
     SUM(CASE WHEN treatment_type = 'Personalized' THEN 1 ELSE 0 END) AS p_sends,
     SUM(CASE WHEN treatment_type = 'Personalized' THEN opened ELSE 0 END) AS p_opens,
-    SUM(CASE WHEN treatment_type = 'Personalized' THEN clicked ELSE 0 END) AS p_clicks,
+    SUM(CASE WHEN treatment_type = 'Personalized' AND opened = 1 AND clicked = 1 THEN 1 ELSE 0 END) AS p_clicks,
     -- Static metrics
     SUM(CASE WHEN treatment_type = 'Static' THEN 1 ELSE 0 END) AS s_sends,
     SUM(CASE WHEN treatment_type = 'Static' THEN opened ELSE 0 END) AS s_opens,
-    SUM(CASE WHEN treatment_type = 'Static' THEN clicked ELSE 0 END) AS s_clicks
+    SUM(CASE WHEN treatment_type = 'Static' AND opened = 1 AND clicked = 1 THEN 1 ELSE 0 END) AS s_clicks
   FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
   WHERE NOT in_crash_window
   GROUP BY user_id, period
@@ -282,8 +289,8 @@ WITH period_stats AS (
     SUM(opened) AS opens,
     SUM(clicked) AS clicks,
     SAFE_DIVIDE(SUM(opened), COUNT(*)) AS open_rate,
-    SAFE_DIVIDE(SUM(clicked), SUM(opened)) AS ctr_of_opens,
-    SAFE_DIVIDE(SUM(clicked), COUNT(*)) AS ctr_of_sends
+    SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), SUM(opened)) AS ctr_of_opens,
+    SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), COUNT(*)) AS ctr_of_sends
   FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
   WHERE NOT in_crash_window
     AND fitment_eligible = TRUE
@@ -329,8 +336,8 @@ WITH period_stats AS (
     period,
     treatment_type,
     SAFE_DIVIDE(SUM(opened), COUNT(*)) AS open_rate,
-    SAFE_DIVIDE(SUM(clicked), SUM(opened)) AS ctr_of_opens,
-    SAFE_DIVIDE(SUM(clicked), COUNT(*)) AS ctr_of_sends
+    SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), SUM(opened)) AS ctr_of_opens,
+    SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), COUNT(*)) AS ctr_of_sends
   FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
   WHERE NOT in_crash_window
     AND fitment_eligible = TRUE
@@ -377,7 +384,7 @@ WITH user_period AS (
     user_id,
     period,
     SUM(opened) AS opens,
-    SUM(clicked) AS clicks,
+    SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END) AS clicks,
     COUNT(*) AS sends
   FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
   WHERE treatment_type = 'Personalized'
@@ -440,7 +447,7 @@ FROM (
     treatment_type,
     COUNT(*) AS sends,
     SUM(opened) AS opens,
-    SUM(clicked) AS clicks
+    SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END) AS clicks
   FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
   WHERE fitment_eligible = TRUE
     AND NOT in_crash_window
@@ -688,7 +695,7 @@ SELECT
   SUM(opened) AS opens,
   SUM(clicked) AS clicks,
   ROUND(SAFE_DIVIDE(SUM(opened), COUNT(*)) * 100, 2) AS open_rate_pct,
-  ROUND(SAFE_DIVIDE(SUM(clicked), SUM(opened)) * 100, 2) AS ctr_of_opens_pct
+  ROUND(SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), SUM(opened)) * 100, 2) AS ctr_of_opens_pct
 FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
 WHERE period = 'v5.17'
 GROUP BY in_crash_window, treatment_type, arm_id

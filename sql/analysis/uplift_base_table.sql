@@ -146,8 +146,8 @@ SELECT
   SUM(opened) AS opens,
   SUM(clicked) AS clicks,
   ROUND(SAFE_DIVIDE(SUM(opened), COUNT(*)) * 100, 2) AS open_rate_pct,
-  ROUND(SAFE_DIVIDE(SUM(clicked), SUM(opened)) * 100, 2) AS ctr_of_opens_pct,
-  ROUND(SAFE_DIVIDE(SUM(clicked), COUNT(*)) * 100, 2) AS ctr_of_sends_pct
+  ROUND(SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), SUM(opened)) * 100, 2) AS ctr_of_opens_pct,
+  ROUND(SAFE_DIVIDE(SUM(CASE WHEN opened = 1 AND clicked = 1 THEN 1 ELSE 0 END), COUNT(*)) * 100, 2) AS ctr_of_sends_pct
 FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
 GROUP BY period, treatment_type, in_crash_window
 ORDER BY period, treatment_type, in_crash_window;
