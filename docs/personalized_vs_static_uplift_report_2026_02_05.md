@@ -14,7 +14,7 @@ Five key findings:
 2. **MECE result**: Among fitment-eligible users in v5.17 period (excl crash), Personalized achieves 5.59% CTR vs Static 0% (but Static only has 19 opens - low sample).
 3. **Within-user result**: Among 612 overlap users (v5.7 only), 3.43% clicked Static vs 2.94% clicked Personalized (delta -0.49pp). No v5.17 overlap (short clean window + different populations).
 4. **DiD estimate**: v5.17 deployment improved Personalized by +13.13pp more than Static (but Static v5.17 sample is tiny - interpret with caution).
-5. **Revenue signal** (corrected with overlap exclusion + timestamp fix): Among fitment-eligible non-overlap users, **Static outperforms** on revenue per user ($110.87 vs $79.85 in 30d, 1.39x higher in v5.7). Prior report's 2.4x→1.06x→0.72x changes reflect progressively stricter methodology.
+5. **Revenue signal** (fully corrected with order dedupe + per-send attribution): Among fitment-eligible non-overlap users, **Static outperforms** on revenue per user ($83.00 vs $56.24 in 30d, **1.48x** higher in v5.7). Order dedupe removed 21% duplicate events.
 
 ---
 
@@ -178,40 +178,42 @@ _Revenue uses fuzzy email+time matching against order events. Treat as direction
 
 **IMPORTANT**: Results below filter to **fitment-eligible users only** for fair population comparison. Excludes overlap users (who received both treatment types) to prevent double-counting. Orders must occur AFTER email send (not same-day).
 
-### Overlap Users Excluded
+### Data Quality Fixes Applied
 
-To prevent double-counting revenue from users who received both treatment types:
+| Fix | Impact |
+|-----|--------|
+| Overlap exclusion | 634 users excluded in v5.7, 71 in v5.17 (received both P and S) |
+| Order dedupe | 12,366 orders removed (21% of raw events - duplicate 'Placed Order' + 'Consumer Website Order') |
+| Per-send attribution | Orders attributed to most recent preceding send (not just first send) |
+| Timestamp fix | Orders must occur strictly AFTER email send |
 
-| Period | Total Users | Overlap Users | Clean Users |
-|--------|-------------|---------------|-------------|
-| v5.7   | 3,357       | 634           | 2,723       |
-| v5.17  | 326         | 71            | 255         |
-
-### 7-Day Attribution (Fitment-Eligible Only, Overlap Excluded)
+### 7-Day Attribution (Fitment-Eligible Only, All Fixes Applied)
 
 | Period | Treatment | Users | Buyers | Conv Rate | Revenue | Rev/User |
 |--------|-----------|-------|--------|-----------|---------|----------|
-| v5.7 | Personalized | 1,797 | 48 | 2.67% | $46,485 | $25.87 |
-| v5.7 | Static | 926 | 52 | 5.62% | $48,889 | $52.80 |
-| v5.17 | Personalized | 208 | 7 | 3.37% | $1,178 | $5.66 |
+| v5.7 | Personalized | 1,797 | 80 | 4.45% | $50,086 | $27.87 |
+| v5.7 | Static | 926 | 57 | 6.16% | $35,394 | $38.22 |
+| v5.17 | Personalized | 208 | 9 | 4.33% | $1,212 | $5.83 |
 | v5.17 | Static | 47 | 2 | 4.26% | $2,253 | $47.94 |
 
-### 30-Day Attribution (Fitment-Eligible Only, Overlap Excluded)
+### 30-Day Attribution (Fitment-Eligible Only, All Fixes Applied)
 
 | Period | Treatment | Users | Buyers | Conv Rate | Revenue | Rev/User |
 |--------|-----------|-------|--------|-----------|---------|----------|
-| v5.7 | Personalized | 1,797 | 135 | 7.51% | $143,483 | $79.85 |
-| v5.7 | Static | 926 | 103 | 11.12% | $102,670 | $110.87 |
-| v5.17 | Personalized | 208 | 11 | 5.29% | $2,794 | $13.43 |
+| v5.7 | Personalized | 1,797 | 143 | 7.96% | $101,056 | $56.24 |
+| v5.7 | Static | 926 | 101 | 10.91% | $76,858 | $83.00 |
+| v5.17 | Personalized | 208 | 11 | 5.29% | $1,906 | $9.17 |
 | v5.17 | Static | 47 | 6 | 12.77% | $4,144 | $88.18 |
 
-**Key finding (corrected with overlap exclusion + timestamp fix)**:
-- **v5.7**: Static outperforms on revenue per user ($110.87 vs $79.85 in 30d, **1.39x** higher)
-- **v5.17**: Static higher ($88 vs $13), but only 47 fitment-eligible Static users vs 208 Personalized
+**Key finding (with all fixes applied)**:
+- **v5.7**: Static outperforms on revenue per user ($83.00 vs $56.24 in 30d, **1.48x** higher)
+- **v5.17**: Static higher ($88 vs $9), but only 47 fitment-eligible Static users vs 208 Personalized
 
-**Why numbers changed from prior report**:
-1. **Overlap exclusion**: Removed 634 users in v5.7, 71 in v5.17 who received both treatment types
-2. **Timestamp fix**: Orders must occur AFTER email send (not same-day), removing misattributed orders
+**Why numbers changed from prior versions**:
+1. **Order dedupe**: Removed 21% duplicate order events (same transaction emitting both event types)
+2. **Per-send attribution**: Each order attributed to most recent preceding send, avoiding bias from different send frequencies
+3. **Overlap exclusion**: Users receiving both treatment types excluded
+4. **Timestamp fix**: Orders must occur strictly AFTER send
 
 **Caveats**:
 - No causal link between email send and purchase (no true control)
@@ -261,7 +263,7 @@ _Jan 14+ data excluded from primary analysis. Shown here for completeness._
 > "After deploying v5.17 segment-based recommendations, Personalized email engagement reversed from underperforming to outperforming Static content. In v5.7, Static CTR was 12.68% vs Personalized 5.15%. After v5.17, Personalized CTR improved while Static dropped to 0%."
 
 **Can claim with caveat:**
-> "Among 612 users who received both types in v5.7, Static had a slight edge (3.43% vs 2.94% clicked). Among non-overlap fitment-eligible users, Static had higher revenue per user ($111 vs $80 in 30d), though this compares Apparel vs Vehicle Parts categories."
+> "Among 612 users who received both types in v5.7, Static had a slight edge (3.43% vs 2.94% clicked). Among non-overlap fitment-eligible users, Static had higher revenue per user ($83 vs $56 in 30d), though this compares Apparel vs Vehicle Parts categories."
 
 **Cannot claim:**
 > "Personalized recommendations generated $X more revenue" (attribution is directional only, and confounded by user population differences)

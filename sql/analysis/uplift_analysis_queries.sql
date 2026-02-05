@@ -462,48 +462,58 @@ ORDER BY period;
 -- 1. Excludes overlap users (users who received both P and S) to prevent
 --    double-counting the same orders in both treatment groups.
 -- 2. Uses TIMESTAMP comparison (order must be AFTER send, not same-day).
--- 3. NOTE: Uses both 'Placed Order' and 'Consumer Website Order' events.
---    If same transaction emits both, revenue may be double-counted.
---    No OrderId available for deduplication. Treat as directional estimate.
+-- 3. Order-level dedupe using user_id + date + amount (approximate, no OrderId).
+-- 4. Per-send attribution: each order attributed to nearest preceding send
+--    (not just first send), avoiding bias from different send frequencies.
 -- ============================================================
 
 -- 5a. Revenue by treatment type (7-day and 30-day attribution)
--- Pre-aggregates each attribution window separately to avoid Cartesian product.
--- Revenue property is 'Subtotal' (case-sensitive, per campaign_funnel_analysis.sql)
+-- Per-send attribution: orders attributed to the most recent preceding send.
+-- Order dedupe: approximate using user_id + date + amount.
 -- IMPORTANT: Filters to fitment_eligible=TRUE for fair population comparison
-WITH send_users AS (
+WITH all_sends AS (
+  -- Keep all sends (not just first) for per-send attribution
   SELECT
     user_id,
     treatment_type,
     period,
-    MIN(treatment_sent_timestamp) AS first_send_ts  -- TIMESTAMP for precise ordering
+    treatment_tracking_id,
+    treatment_sent_timestamp AS send_ts
   FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
   WHERE NOT in_crash_window
-    AND fitment_eligible = TRUE  -- Fair population comparison
-  GROUP BY user_id, treatment_type, period
+    AND fitment_eligible = TRUE
 ),
 -- Identify users who received BOTH treatment types (overlap users)
 -- These are excluded to prevent double-counting revenue
 overlap_users AS (
   SELECT user_id
-  FROM send_users
+  FROM all_sends
   GROUP BY user_id
   HAVING COUNT(DISTINCT treatment_type) > 1
 ),
 -- Filter to non-overlap users only
-send_users_clean AS (
-  SELECT su.*
-  FROM send_users su
-  LEFT JOIN overlap_users ou ON su.user_id = ou.user_id
-  WHERE ou.user_id IS NULL  -- Exclude overlap users
+sends_clean AS (
+  SELECT s.*
+  FROM all_sends s
+  LEFT JOIN overlap_users ou ON s.user_id = ou.user_id
+  WHERE ou.user_id IS NULL
+),
+-- Get unique users per treatment/period (for denominator)
+users_per_group AS (
+  SELECT
+    treatment_type,
+    period,
+    COUNT(DISTINCT user_id) AS user_count
+  FROM sends_clean
+  GROUP BY treatment_type, period
 ),
 -- Orders from unified events (Dec 2025+)
--- Keep timestamp for precise attribution
-user_orders AS (
+-- Dedupe by user_id + date + amount (approximate, no OrderId available)
+user_orders_raw AS (
   SELECT
     user_id,
     client_event_timestamp AS order_ts,
-    -- Subtotal is the revenue property (matches campaign_funnel_analysis.sql)
+    DATE(client_event_timestamp) AS order_date,
     COALESCE(
       ep.double_value,
       SAFE_CAST(ep.string_value AS FLOAT64),
@@ -515,61 +525,87 @@ user_orders AS (
     AND ep.property_name = 'Subtotal'
     AND client_event_timestamp BETWEEN '2025-12-07' AND '2026-03-06'
 ),
--- 7-day attribution: order must be AFTER send (not same-day misattribution)
-rev_7d AS (
+-- Dedupe orders: keep one per user + date + amount
+user_orders AS (
   SELECT
-    su.user_id,
-    su.treatment_type,
-    su.period,
-    COUNT(DISTINCT DATE(o.order_ts)) AS order_count_7d,
-    SUM(o.order_total) AS revenue_7d
-  FROM send_users_clean su
-  LEFT JOIN user_orders o
-    ON su.user_id = o.user_id
-    AND o.order_ts > su.first_send_ts  -- Strictly AFTER send
-    AND o.order_ts <= TIMESTAMP_ADD(su.first_send_ts, INTERVAL 7 DAY)
-  GROUP BY su.user_id, su.treatment_type, su.period
+    user_id,
+    MIN(order_ts) AS order_ts,  -- Take earliest timestamp for the dedupe key
+    order_date,
+    order_total
+  FROM user_orders_raw
+  GROUP BY user_id, order_date, order_total
 ),
--- 30-day attribution: order must be AFTER send
-rev_30d AS (
+-- For each order, find the most recent preceding send (per-send attribution)
+-- This avoids bias from different send frequencies between treatments
+order_send_match AS (
   SELECT
-    su.user_id,
-    su.treatment_type,
-    su.period,
-    COUNT(DISTINCT DATE(o.order_ts)) AS order_count_30d,
-    SUM(o.order_total) AS revenue_30d
-  FROM send_users_clean su
-  LEFT JOIN user_orders o
-    ON su.user_id = o.user_id
-    AND o.order_ts > su.first_send_ts  -- Strictly AFTER send
-    AND o.order_ts <= TIMESTAMP_ADD(su.first_send_ts, INTERVAL 30 DAY)
-  GROUP BY su.user_id, su.treatment_type, su.period
+    o.user_id,
+    o.order_ts,
+    o.order_date,
+    o.order_total,
+    s.treatment_type,
+    s.period,
+    s.send_ts,
+    -- Rank sends by recency (most recent send before this order = rank 1)
+    -- Cast order_total to STRING for partitioning (FLOAT64 not allowed in PARTITION BY)
+    ROW_NUMBER() OVER (
+      PARTITION BY o.user_id, o.order_date, CAST(o.order_total AS STRING)
+      ORDER BY s.send_ts DESC
+    ) AS send_rank
+  FROM user_orders o
+  JOIN sends_clean s
+    ON o.user_id = s.user_id
+    AND o.order_ts > s.send_ts  -- Order must be AFTER send
+    AND o.order_ts <= TIMESTAMP_ADD(s.send_ts, INTERVAL 30 DAY)  -- Within 30-day window
+),
+-- Keep only the most recent send attribution per order
+orders_attributed AS (
+  SELECT
+    user_id,
+    order_ts,
+    order_date,
+    order_total,
+    treatment_type,
+    period,
+    send_ts,
+    -- Flag for 7-day vs 30-day window
+    CASE WHEN order_ts <= TIMESTAMP_ADD(send_ts, INTERVAL 7 DAY) THEN 1 ELSE 0 END AS in_7d_window
+  FROM order_send_match
+  WHERE send_rank = 1  -- Most recent preceding send gets credit
+),
+-- Aggregate revenue by treatment/period
+revenue_summary AS (
+  SELECT
+    treatment_type,
+    period,
+    -- 7-day metrics
+    COUNT(DISTINCT CASE WHEN in_7d_window = 1 THEN user_id END) AS buyers_7d,
+    SUM(CASE WHEN in_7d_window = 1 THEN order_total ELSE 0 END) AS revenue_7d,
+    -- 30-day metrics
+    COUNT(DISTINCT user_id) AS buyers_30d,
+    SUM(order_total) AS revenue_30d
+  FROM orders_attributed
+  GROUP BY treatment_type, period
 )
 SELECT
-  r7.treatment_type,
-  r7.period,
-  COUNT(DISTINCT r7.user_id) AS users_sent,
+  u.treatment_type,
+  u.period,
+  u.user_count AS users_sent,
   -- 7-day attribution
-  COUNTIF(r7.order_count_7d > 0) AS buyers_7d,
-  ROUND(SAFE_DIVIDE(COUNTIF(r7.order_count_7d > 0),
-    COUNT(DISTINCT r7.user_id)) * 100, 2) AS conversion_rate_7d_pct,
-  ROUND(SUM(r7.revenue_7d), 2) AS revenue_7d,
-  ROUND(SAFE_DIVIDE(SUM(r7.revenue_7d),
-    COUNT(DISTINCT r7.user_id)), 2) AS revenue_per_user_7d,
+  COALESCE(r.buyers_7d, 0) AS buyers_7d,
+  ROUND(SAFE_DIVIDE(r.buyers_7d, u.user_count) * 100, 2) AS conversion_rate_7d_pct,
+  ROUND(COALESCE(r.revenue_7d, 0), 2) AS revenue_7d,
+  ROUND(SAFE_DIVIDE(r.revenue_7d, u.user_count), 2) AS revenue_per_user_7d,
   -- 30-day attribution
-  COUNTIF(r30.order_count_30d > 0) AS buyers_30d,
-  ROUND(SAFE_DIVIDE(COUNTIF(r30.order_count_30d > 0),
-    COUNT(DISTINCT r7.user_id)) * 100, 2) AS conversion_rate_30d_pct,
-  ROUND(SUM(r30.revenue_30d), 2) AS revenue_30d,
-  ROUND(SAFE_DIVIDE(SUM(r30.revenue_30d),
-    COUNT(DISTINCT r7.user_id)), 2) AS revenue_per_user_30d
-FROM rev_7d r7
-JOIN rev_30d r30
-  ON r7.user_id = r30.user_id
-  AND r7.treatment_type = r30.treatment_type
-  AND r7.period = r30.period
-GROUP BY r7.treatment_type, r7.period
-ORDER BY r7.period, r7.treatment_type;
+  COALESCE(r.buyers_30d, 0) AS buyers_30d,
+  ROUND(SAFE_DIVIDE(r.buyers_30d, u.user_count) * 100, 2) AS conversion_rate_30d_pct,
+  ROUND(COALESCE(r.revenue_30d, 0), 2) AS revenue_30d,
+  ROUND(SAFE_DIVIDE(r.revenue_30d, u.user_count), 2) AS revenue_per_user_30d
+FROM users_per_group u
+LEFT JOIN revenue_summary r
+  ON u.treatment_type = r.treatment_type
+  AND u.period = r.period
+ORDER BY u.period, u.treatment_type;
 
 -- 5b. Overlap user count (diagnostic - how many excluded?)
 SELECT
@@ -596,6 +632,43 @@ LEFT JOIN (
 ) ou ON su.user_id = ou.user_id
 GROUP BY period
 ORDER BY period;
+
+-- 5c. Order dedupe diagnostic (how many orders deduped?)
+WITH orders_raw AS (
+  SELECT
+    user_id,
+    client_event_timestamp AS order_ts,
+    DATE(client_event_timestamp) AS order_date,
+    event_name,
+    COALESCE(
+      ep.double_value,
+      SAFE_CAST(ep.string_value AS FLOAT64),
+      CAST(ep.long_value AS FLOAT64)
+    ) AS order_total
+  FROM `auxia-gcp.company_1950.ingestion_unified_schema_incremental`,
+    UNNEST(event_properties) AS ep
+  WHERE event_name IN ('Placed Order', 'Consumer Website Order')
+    AND ep.property_name = 'Subtotal'
+    AND client_event_timestamp BETWEEN '2025-12-07' AND '2026-03-06'
+),
+orders_deduped AS (
+  SELECT user_id, order_date, order_total
+  FROM orders_raw
+  GROUP BY user_id, order_date, order_total
+)
+SELECT
+  'Raw order events' AS metric,
+  COUNT(*) AS count
+FROM orders_raw
+UNION ALL
+SELECT
+  'After dedupe (user+date+amount)' AS metric,
+  COUNT(*) AS count
+FROM orders_deduped
+UNION ALL
+SELECT
+  'Orders removed by dedupe' AS metric,
+  (SELECT COUNT(*) FROM orders_raw) - (SELECT COUNT(*) FROM orders_deduped) AS count;
 
 
 -- ============================================================
