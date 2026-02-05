@@ -7,9 +7,9 @@
 
 ## Executive Summary
 
-Fitment-eligible users are the core audience for Holley's personalized vehicle recommendations. Here's how they performed:
+Fitment-eligible users are the core audience for Holley's personalized vehicle recommendations. There are **503,828 users with vehicle data (YMM)** in the system, but the post-purchase email campaign only reaches ~10% of recent purchasers who have YMM data. Here's how they performed:
 
-1. **We reached 3,357 fitment users in v5.7 and 736 in v5.17** across Personalized and Static emails.
+1. **We reached 3,357 fitment users in v5.7 and 736 in v5.17** out of 32,687 and 7,810 total post-purchase email recipients respectively (~10% have vehicle data).
 2. **Overall, ~4-5% of fitment users click at least one email** (either type). This improved from 4.26% in v5.7 to 4.89% in v5.17.
 3. **Per-user click rates are nearly equal in v5.7**: Personalized 3.57% vs Static 3.78% (delta only -0.21pp). The per-send CTR gap (4.57% vs 12.26%) is misleading due to 3.3x send frequency difference.
 4. **Personalized gets MORE users to open**: 32.17% of P users opened vs 23.21% of S users in v5.7. Personalized emails are opened more, but when opened, Static (Apparel) gets more clicks.
@@ -25,7 +25,26 @@ Fitment-eligible users are the core audience for Holley's personalized vehicle r
 
 Users with vehicle data (Year/Make/Model) who can receive personalized vehicle-specific product recommendations. All Personalized treatment recipients are fitment-eligible by definition. A subset of Static treatment recipients also have vehicle data.
 
-### User Distribution
+### Scale Context: 503K YMM Users, ~3K Reached
+
+There are **503,828 users with vehicle data (YMM)** in the Holley system. However, this analysis covers only the **Post Purchase email campaign** (surface_id=929), which targets users who recently made a purchase. Only ~10% of post-purchase email recipients have YMM data on file.
+
+| Metric | v5.7 | v5.17 |
+|--------|------|-------|
+| Total users with YMM in system | 503,828 | 503,828 |
+| Total users emailed (post-purchase) | 32,687 | 7,810 |
+| Of those, fitment-eligible | 3,357 (**10.3%**) | 736 (**9.4%**) |
+| Non-fitment emailed | 29,330 | 7,074 |
+
+**Why are fitment numbers small?**
+- The post-purchase campaign is the bottleneck: only users with a recent purchase trigger these emails
+- Of those recent purchasers, only ~10% have vehicle data (YMM) on file
+- All 2,753 Personalized recipients are fitment-eligible (100%) - the system correctly targets only users with vehicle data
+- Static (Apparel) goes mostly to non-fitment users: only 1,704 of 37,380 Static recipients (4.6%) happen to also have vehicle data
+
+**Implication**: The 503K YMM users represent a large untapped audience. The current analysis only covers the subset who made a recent purchase AND received a post-purchase email.
+
+### Treatment Distribution Among Fitment Users
 
 | Period | Total Fitment Users | Got Personalized | Got Static | Got Both | P-Only | S-Only |
 |--------|-------------------|------------------|------------|----------|--------|--------|
@@ -33,6 +52,13 @@ Users with vehicle data (Year/Make/Model) who can receive personalized vehicle-s
 | **v5.17** | 736 | 586 | 162 | 12 | 574 | 150 |
 
 Key: 612 users in v5.7 received BOTH Personalized and Static emails, enabling a direct within-user comparison.
+
+### Treatment Reach Across All Users
+
+| Treatment | Fitment Users | Non-Fitment Users | Total | Pct Fitment |
+|-----------|--------------|-------------------|-------|-------------|
+| Personalized | 2,753 | 0 | 2,753 | **100%** |
+| Static | 1,704 | 35,676 | 37,380 | 4.6% |
 
 ---
 
