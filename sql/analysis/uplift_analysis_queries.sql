@@ -457,11 +457,18 @@ ORDER BY period;
 -- Treat as directional signal, not causal proof.
 -- Uses ingestion_unified_schema_incremental for recent orders
 -- (import_orders only covers through Aug 2025).
+--
+-- FIXES (ChatGPT review 2026-02-04):
+-- 1. Excludes overlap users (users who received both P and S) to prevent
+--    double-counting the same orders in both treatment groups.
+-- 2. Uses TIMESTAMP comparison (order must be AFTER send, not same-day).
+-- 3. NOTE: Uses both 'Placed Order' and 'Consumer Website Order' events.
+--    If same transaction emits both, revenue may be double-counted.
+--    No OrderId available for deduplication. Treat as directional estimate.
 -- ============================================================
 
 -- 5a. Revenue by treatment type (7-day and 30-day attribution)
--- NOTE: Pre-aggregates each attribution window separately to avoid
--- Cartesian product from dual LEFT JOIN.
+-- Pre-aggregates each attribution window separately to avoid Cartesian product.
 -- Revenue property is 'Subtotal' (case-sensitive, per campaign_funnel_analysis.sql)
 -- IMPORTANT: Filters to fitment_eligible=TRUE for fair population comparison
 WITH send_users AS (
@@ -469,60 +476,73 @@ WITH send_users AS (
     user_id,
     treatment_type,
     period,
-    MIN(send_date) AS first_send_date
+    MIN(treatment_sent_timestamp) AS first_send_ts  -- TIMESTAMP for precise ordering
   FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
   WHERE NOT in_crash_window
-    AND fitment_eligible = TRUE  -- P1 fix: fair population comparison
+    AND fitment_eligible = TRUE  -- Fair population comparison
   GROUP BY user_id, treatment_type, period
 ),
+-- Identify users who received BOTH treatment types (overlap users)
+-- These are excluded to prevent double-counting revenue
+overlap_users AS (
+  SELECT user_id
+  FROM send_users
+  GROUP BY user_id
+  HAVING COUNT(DISTINCT treatment_type) > 1
+),
+-- Filter to non-overlap users only
+send_users_clean AS (
+  SELECT su.*
+  FROM send_users su
+  LEFT JOIN overlap_users ou ON su.user_id = ou.user_id
+  WHERE ou.user_id IS NULL  -- Exclude overlap users
+),
 -- Orders from unified events (Dec 2025+)
--- Uses SUM to capture multiple same-day orders (P1 fix)
+-- Keep timestamp for precise attribution
 user_orders AS (
   SELECT
     user_id,
-    DATE(client_event_timestamp) AS order_date,
+    client_event_timestamp AS order_ts,
     -- Subtotal is the revenue property (matches campaign_funnel_analysis.sql)
-    -- SUM captures multiple same-day orders; MAX would undercount
-    SUM(CASE WHEN ep.property_name = 'Subtotal'
-      THEN COALESCE(
-        ep.double_value,
-        SAFE_CAST(ep.string_value AS FLOAT64),
-        CAST(ep.long_value AS FLOAT64)
-      ) END) AS order_total
+    COALESCE(
+      ep.double_value,
+      SAFE_CAST(ep.string_value AS FLOAT64),
+      CAST(ep.long_value AS FLOAT64)
+    ) AS order_total
   FROM `auxia-gcp.company_1950.ingestion_unified_schema_incremental`,
     UNNEST(event_properties) AS ep
   WHERE event_name IN ('Placed Order', 'Consumer Website Order')
-    AND DATE(client_event_timestamp) BETWEEN '2025-12-07' AND '2026-03-06'
-  GROUP BY user_id, DATE(client_event_timestamp)
+    AND ep.property_name = 'Subtotal'
+    AND client_event_timestamp BETWEEN '2025-12-07' AND '2026-03-06'
 ),
--- 7-day attribution: pre-aggregate per user+treatment+period
+-- 7-day attribution: order must be AFTER send (not same-day misattribution)
 rev_7d AS (
   SELECT
     su.user_id,
     su.treatment_type,
     su.period,
-    COUNT(DISTINCT o.order_date) AS order_count_7d,
+    COUNT(DISTINCT DATE(o.order_ts)) AS order_count_7d,
     SUM(o.order_total) AS revenue_7d
-  FROM send_users su
+  FROM send_users_clean su
   LEFT JOIN user_orders o
     ON su.user_id = o.user_id
-    AND o.order_date BETWEEN su.first_send_date
-        AND DATE_ADD(su.first_send_date, INTERVAL 7 DAY)
+    AND o.order_ts > su.first_send_ts  -- Strictly AFTER send
+    AND o.order_ts <= TIMESTAMP_ADD(su.first_send_ts, INTERVAL 7 DAY)
   GROUP BY su.user_id, su.treatment_type, su.period
 ),
--- 30-day attribution: pre-aggregate per user+treatment+period
+-- 30-day attribution: order must be AFTER send
 rev_30d AS (
   SELECT
     su.user_id,
     su.treatment_type,
     su.period,
-    COUNT(DISTINCT o.order_date) AS order_count_30d,
+    COUNT(DISTINCT DATE(o.order_ts)) AS order_count_30d,
     SUM(o.order_total) AS revenue_30d
-  FROM send_users su
+  FROM send_users_clean su
   LEFT JOIN user_orders o
     ON su.user_id = o.user_id
-    AND o.order_date BETWEEN su.first_send_date
-        AND DATE_ADD(su.first_send_date, INTERVAL 30 DAY)
+    AND o.order_ts > su.first_send_ts  -- Strictly AFTER send
+    AND o.order_ts <= TIMESTAMP_ADD(su.first_send_ts, INTERVAL 30 DAY)
   GROUP BY su.user_id, su.treatment_type, su.period
 )
 SELECT
@@ -550,6 +570,32 @@ JOIN rev_30d r30
   AND r7.period = r30.period
 GROUP BY r7.treatment_type, r7.period
 ORDER BY r7.period, r7.treatment_type;
+
+-- 5b. Overlap user count (diagnostic - how many excluded?)
+SELECT
+  period,
+  COUNT(DISTINCT su.user_id) AS total_users,
+  COUNT(DISTINCT ou.user_id) AS overlap_users,
+  COUNT(DISTINCT su.user_id) - COUNT(DISTINCT ou.user_id) AS clean_users
+FROM (
+  SELECT user_id, treatment_type, period
+  FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
+  WHERE NOT in_crash_window AND fitment_eligible = TRUE
+  GROUP BY user_id, treatment_type, period
+) su
+LEFT JOIN (
+  SELECT user_id
+  FROM (
+    SELECT user_id, treatment_type
+    FROM `auxia-reporting.temp_holley_v5_17.uplift_base`
+    WHERE NOT in_crash_window AND fitment_eligible = TRUE
+    GROUP BY user_id, treatment_type
+  )
+  GROUP BY user_id
+  HAVING COUNT(DISTINCT treatment_type) > 1
+) ou ON su.user_id = ou.user_id
+GROUP BY period
+ORDER BY period;
 
 
 -- ============================================================

@@ -12,7 +12,7 @@ Five key findings:
 
 1. **Direction reversal confirmed**: In v5.7 (Dec 7 - Jan 9), Static outperformed Personalized on CTR (12.68% vs 5.15%). After v5.17 deployment (Jan 10+), Personalized wins (5.59% vs 0%).
 2. **MECE result**: Among fitment-eligible users in v5.17 period (excl crash), Personalized achieves 5.59% CTR vs Static 0% (but Static only has 19 opens - low sample).
-3. **Within-user result**: Among 612 overlap users (v5.7 only), 3.43% clicked Static vs 2.94% clicked Personalized (delta -0.49pp). No v5.17 overlap due to different user populations.
+3. **Within-user result**: Among 612 overlap users (v5.7 only), 3.43% clicked Static vs 2.94% clicked Personalized (delta -0.49pp). No v5.17 overlap (short clean window + different populations).
 4. **DiD estimate**: v5.17 deployment improved Personalized by +13.13pp more than Static (but Static v5.17 sample is tiny - interpret with caution).
 5. **Revenue signal** (corrected): Among fitment-eligible users, Personalized $121/user vs Static $115/user in v5.7 - only 1.06x higher (not 2.4x as initially reported with biased population).
 
@@ -120,7 +120,7 @@ _Users who received BOTH Personalized and Static. Excludes crash window._
 | v5.7 | 612 | 3,273 | 354 | 19 | 5.37% | 1,117 | 169 | 21 | **12.43%** | **-7.06** |
 | v5.17 | 0 | - | - | - | - | - | - | - | - | - |
 
-**Key finding**: No v5.17 overlap users! Personalized only goes to fitment-eligible users, Static mostly goes to non-eligible users. Different populations.
+**Key finding**: No v5.17 overlap users (excl crash). This reflects both different user populations (Personalized = fitment-eligible, Static = mostly non-eligible) and the short v5.17 clean window (Jan 10-13, only 4 days before crash).
 
 ### User-Level (At-Least-Once)
 
@@ -168,7 +168,7 @@ _The most important finding for contract renewal._
 **Narrative**:
 - In v5.7 era: Static (Apparel) outperformed Personalized on CTR by 7.53pp. This was because the algorithm ranked by global popularity, producing less relevant vehicle-specific recommendations.
 - After v5.17 deployed (Jan 10): The 3-tier segment fallback (segment -> make -> global) made recommendations dramatically more relevant. Personalized now outperforms Static.
-- **This reversal proves the algorithm change worked.**
+- **This reversal is consistent with the algorithm change having a positive effect**, though the tiny v5.17 Static sample (74 sends, 0 clicks) limits statistical confidence.
 
 ---
 
@@ -176,7 +176,7 @@ _The most important finding for contract renewal._
 
 _Revenue uses fuzzy email+time matching against order events. Treat as directional signal, not causal proof._
 
-**IMPORTANT**: Results below filter to **fitment-eligible users only** for fair population comparison. Uses SUM (not MAX) to capture multiple same-day orders.
+**IMPORTANT**: Results below filter to **fitment-eligible users only** for fair population comparison. Excludes overlap users (who received both treatment types) to prevent double-counting. Orders must occur AFTER email send (not same-day).
 
 ### 7-Day Attribution (Fitment-Eligible Only)
 
@@ -234,9 +234,11 @@ _Jan 14+ data excluded from primary analysis. Shown here for completeness._
 1. **No true control group**: Cannot measure absolute lift vs "no email"
 2. **Static = Apparel only**: 1 of 22 Static treatments has sends; comparison is Parts vs Apparel, not pure personalization test
 3. **Small click counts**: v5.17 has limited clean data (749 Personalized, 74 Static fitment-eligible sends)
-4. **No v5.17 overlap**: Different user populations between Personalized and Static; within-user comparison only available for v5.7
+4. **No v5.17 overlap**: Different user populations and short clean window (4 days before crash); within-user comparison only available for v5.7
 5. **Revenue is directional**: Fuzzy attribution, no click-to-purchase tracking
-6. **Boost factor bias**: 100x boost for Personalized means selection isn't random
+6. **Revenue overlap exclusion**: Users receiving both treatment types excluded from revenue analysis to prevent double-counting
+7. **Order event dedupe**: Uses both 'Placed Order' and 'Consumer Website Order' events; if same transaction emits both, revenue may be inflated (no OrderId for deduplication)
+8. **Boost factor bias**: 100x boost for Personalized means selection isn't random
 
 ---
 
