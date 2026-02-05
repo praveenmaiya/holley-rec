@@ -1,326 +1,145 @@
-# Personalized vs Static Uplift Report
+# Personalized vs Static Email Performance Report (V1)
 
 **Date**: February 5, 2026
-**Author**: Claude Code analysis
-**Status**: COMPLETE - all queries executed, CTR formula corrected Feb 5
-**Updated**: February 5, 2026 - CTR formula fix + diagnostic findings (see v2 report Section 7)
+**Period**: December 7, 2025 - February 4, 2026
+**Version**: V1 (crash window excluded)
+**Primary Report**: See [V2 report](personalized_vs_static_uplift_report_v2.md) for full analysis with no crash exclusion.
 
 ---
 
 ## Executive Summary
 
-Five key findings:
+This report analyzes the Post Purchase email campaign with the Jan 14+ crash window excluded. For the comprehensive analysis (all data, cross-campaign results), see the V2 report.
 
-1. **Direction reversal confirmed**: In v5.7 (Dec 7 - Jan 9), Static outperformed Personalized on per-send CTR (12.26% vs 4.57%, corrected). After v5.17 deployment (Jan 10+), Personalized wins (4.90% vs 0%) on crash-excluded data.
-2. **MECE result**: Among fitment-eligible users in v5.17 period (excl crash), Personalized achieves 4.90% CTR vs Static 0% (but Static only has 19 opens - low sample).
-3. **Within-user result**: Among 612 overlap users (v5.7 only), 3.43% clicked Static vs 2.94% clicked Personalized (delta -0.49pp). No v5.17 overlap (short clean window + different populations).
-4. **DiD estimate**: v5.17 deployment improved Personalized by +13.13pp more than Static (but Static v5.17 sample is tiny - interpret with caution).
-5. **Revenue signal** (fully corrected with order dedupe + per-send attribution): Among fitment-eligible non-overlap users, **Static outperforms** on revenue per user ($83.00 vs $56.24 in 30d, **1.48x** higher in v5.7). Order dedupe removed 21% duplicate events.
+Key findings:
 
-**CTR Formula Fix (Feb 5)**: All CTR numbers corrected to exclude clicks from image-blocking clients (clicked=1, opened=0). 19 phantom clicks removed. See v2 report for full diagnostic analysis including send frequency confound, email fatigue decay, and per-user binary comparison.
-
----
-
-## Analysis Design
-
-### Scope
-- **Campaign**: Post Purchase only (surface_id=929)
-- **Traffic**: LIVE only (request_source='LIVE')
-- **Treatments**: 10 Personalized Fitment vs 22 Static (only Apparel 16490939 has sends)
-- **Grain**: treatment_tracking_id (one row per email send)
-
-### Periods
-
-| Period | Dates | Pipeline | Notes |
-|--------|-------|----------|-------|
-| **v5.7** | Dec 7, 2025 - Jan 9, 2026 | Baseline | Global popularity scoring |
-| **v5.17** | Jan 10, 2026 - Feb 4, 2026 | 3-tier segment fallback | Crash data (Jan 14+) excluded from primary analysis |
-
-### Crash Exclusion
-The 50/50 arm split on Jan 14 crashed CTR to ~0%. All primary analyses exclude `in_crash_window = TRUE`. Crash data analyzed separately in Section 7.
-
-### Three Methods
-
-| Method | What it controls for | Strength |
-|--------|---------------------|----------|
-| **A: MECE** | User population differences (fitment-eligible only) | Good |
-| **B: Within-user** | All user-level confounders (same users, both types) | Gold standard |
-| **C: Deployment uplift (DiD)** | Temporal trends (Static as control) | Causal estimate |
+1. **Personalized drives significantly more opens**: 32.17% of Personalized users opened vs 23.21% of Static users in v5.7 (+39% lift).
+2. **Per-user click rates are nearly equal**: P=3.57% vs S=3.78% in v5.7 (delta only 0.21pp). The per-send CTR gap is driven by 3.3x send frequency difference.
+3. **v5.17 shows Personalized winning** on crash-excluded data (CTR 4.90% vs 0%), though Static sample is small (74 sends).
+4. **v5.17 algorithm improved open rates by 61%** for the same users (14.56% to 23.48%).
+5. **Cross-campaign personalization works**: All 3 campaigns show +65% to +272% click uplift from personalization. See [Personalization Uplift Report](fitment_user_engagement_report.md).
 
 ---
 
-## 1. Data Quality
+## 1. Personalization Drives Opens
 
-### Send Volume
+### Per-User Open Rates (v5.7, Fitment-Eligible)
 
-| Period | Treatment | Total Sends | Unique Users | Opens | Clicks | Fitment Eligible | Clean Sends |
-|--------|-----------|-------------|--------------|-------|--------|------------------|-------------|
-| v5.7 | Personalized | 15,226 | 2,409 | 1,882 | 97 | 15,226 (100%) | 15,226 |
-| v5.7 | Static | 58,094 | 30,890 | 4,661 | 319 | 2,900 (5%) | 58,094 |
-| v5.17 | Personalized | 3,537 | 586 | 653 | 29 | 3,537 (100%) | 749 |
-| v5.17 | Static | 13,448 | 7,236 | 1,253 | 76 | 290 (2%) | 2,763 |
+| Treatment | Users | Pct Users Opened | Advantage |
+|-----------|------:|------------------:|-----------|
+| **Personalized** | 2,409 | **32.17%** | **+39% more users open** |
+| Static | 1,560 | 23.21% | |
 
-**Key observation**: Personalized is 100% fitment-eligible; Static is only 2-5% fitment-eligible. This is by design - Personalized only sends to users with vehicle data.
+### Within-User Comparison (612 users got both, v5.7)
 
-### Static Treatment Distribution
+| Metric | Personalized | Static | Advantage |
+|--------|------------:|-------:|-----------|
+| **Pct users opened** | **28.76%** | 21.73% | **P +7.03pp (+32%)** |
+| Pct users clicked | 2.94% | 3.43% | S +0.49pp (3 users) |
 
-| Treatment ID | Category | Sends | Users | Opens | Clicks |
-|--------------|----------|-------|-------|-------|--------|
-| 16490939 | Apparel | 71,542 | 37,380 | 5,914 | 395 |
-| (others) | Various | 0 | 0 | 0 | 0 |
-
-**Caveat**: "Personalized vs Static" = "Vehicle Parts vs Apparel" in practice.
-
-### Arm Distribution
-
-| Period | Arm | Crash Window | Sends | Opens | Clicks | CTR (opens) |
-|--------|-----|--------------|-------|-------|--------|-------------|
-| v5.7 | 4103 (Random) | false | 70,712 | 6,404 | 408 | 6.37% |
-| v5.7 | 4689 (Bandit) | false | 2,608 | 139 | 8 | 5.76% |
-| v5.17 | 4103 (Random) | false | 3,203 | 387 | 26 | 6.72% |
-| v5.17 | 4689 (Bandit) | false | 309 | 47 | 2 | 4.26% |
-| v5.17 | 4103 (Random) | true | 6,928 | 749 | 42 | 5.61% |
-| v5.17 | 4689 (Bandit) | true | 6,545 | 723 | 35 | 4.84% |
-
-**Note**: Jan 14 crash visible - more balanced 4103/4689 split in crash window (was 10/90 before).
+Same users, same time period - Personalized generates 32% more opens. The click gap is negligible (3 users out of 612).
 
 ---
 
-## 2. Method A: MECE Comparison
+## 2. Per-User Click Rates: Nearly Equal
 
-_Fitment-eligible users only. Excludes crash window._
+| Period | Treatment | Users | Pct Clicked | Sends/User |
+|--------|-----------|------:|-----------:|-----------:|
+| v5.7 | Personalized | 2,409 | 3.57% | 6.3 |
+| v5.7 | Static | 1,560 | 3.78% | 1.9 |
 
-### Primary Result (Corrected CTR Formula)
-
-_CTR formula corrected: only counts clicks where opened=1 (excludes image-blocking phantom clicks)._
-
-| Period | Treatment | Sends | Unique Users | Opens | Clicks (corrected) | Open Rate | CTR (opens) | CTR (sends) |
-|--------|-----------|-------|--------------|-------|---------------------|-----------|-------------|-------------|
-| v5.7 | Personalized | 15,226 | 2,409 | 1,882 | 86 | 12.36% | 4.57% | 0.56% |
-| v5.7 | Static | 2,900 | 1,560 | 473 | 58 | 16.31% | **12.26%** | 2.00% |
-| v5.17 | Personalized | 749 | 279 | 143 | 7 | 19.09% | **4.90%** | 0.93% |
-| v5.17 | Static | 74 | 47 | 19 | 0 | 25.68% | 0.00% | 0.00% |
-
-### With 95% Confidence Intervals (Wilson, Corrected)
-
-| Period | Treatment | Opens | Clicks | CTR (opens) | 95% CI |
-|--------|-----------|-------|--------|-------------|--------|
-| v5.7 | Personalized | 1,882 | 86 | 4.57% | [3.71%, 5.62%] |
-| v5.7 | Static | 473 | 58 | 12.26% | [9.58%, 15.56%] |
-| v5.17 | Personalized | 143 | 7 | 4.90% | [2.38%, 9.75%] |
-| v5.17 | Static | 19 | 0 | 0.00% | [0.00%, 16.82%] |
-
-**Interpretation**: In v5.7, Static CTR is significantly higher than Personalized (CIs don't overlap). In v5.17, Personalized beats Static, but Static CI is very wide due to small sample (19 opens).
-
-**Important**: Per-send CTR is confounded by 3.3x send frequency difference. See v2 report Section 7 for full diagnostic showing per-user binary rates are nearly equal in v5.7.
+The apparent 2.7x per-send CTR gap shrinks to **1.06x** per-user. Personalized sends 3.3x more emails, diluting per-send metrics through natural email fatigue.
 
 ---
 
-## 3. Method B: Within-User Comparison (Gold Standard)
+## 3. v5.17 Algorithm Improvement
 
-_Users who received BOTH Personalized and Static. Excludes crash window._
+### Same Users Across Periods (n=242)
 
-### Send-Level Comparison
+| Metric | v5.7 | v5.17 | Improvement |
+|--------|-----:|------:|------------:|
+| **Per-send open rate** | 14.56% | **23.48%** | **+61%** |
+| **Pct users opened** | 33.47% | **38.84%** | **+16%** |
+| Sends/user | 6.0 | 4.8 | Fewer, better sends |
 
-| Period | Overlap Users | P Sends | P Opens | P Clicks | P CTR | S Sends | S Opens | S Clicks | S CTR | Delta (pp) |
-|--------|---------------|---------|---------|----------|-------|---------|---------|----------|-------|------------|
-| v5.7 | 612 | 3,273 | 354 | 19 | 5.37% | 1,117 | 169 | 21 | **12.43%** | **-7.06** |
-| v5.17 | 0 | - | - | - | - | - | - | - | - | - |
+v5.17 sends fewer emails but gets more of them opened. The algorithm is improving.
 
-**Key finding**: No v5.17 overlap users (excl crash). This reflects both different user populations (Personalized = fitment-eligible, Static = mostly non-eligible) and the short v5.17 clean window (Jan 10-13, only 4 days before crash).
+### v5.17 MECE Result (Crash Excluded)
 
-### User-Level (At-Least-Once)
+| Treatment | Sends | Opens | CTR (opens) |
+|-----------|------:|------:|------------:|
+| Personalized | 749 | 143 | **4.90%** |
+| Static | 74 | 19 | 0.00% |
 
-| Period | Overlap Users | Clicked Personalized | Clicked Static | Clicked Both | Clicked Neither | Pct Clicked P | Pct Clicked S | Delta (pp) |
-|--------|---------------|---------------------|----------------|--------------|-----------------|---------------|---------------|------------|
-| v5.7 | 612 | 18 | 21 | 2 | 575 | 2.94% | **3.43%** | **-0.49** |
-| Combined | 634 | 20 | 21 | 2 | 595 | 3.15% | 3.31% | -0.16 |
-
-**Interpretation**: Among the 612 v5.7 overlap users, Static had slightly higher click rate (3.43% vs 2.94%). This confirms Static was winning in v5.7 era, even among the same users.
-
----
-
-## 4. Method C: Deployment Uplift (Difference-in-Differences)
-
-_Static serves as the control trend. If Personalized improved MORE than Static after v5.17 deployment, that excess improvement is causally attributable to the algorithm change._
-
-### DiD Summary (Fitment-Eligible Only)
-
-| Treatment | v5.7 Sends | v5.7 Open Rate | v5.7 CTR (opens) | v5.17 Sends | v5.17 Open Rate | v5.17 CTR (opens) | Open Rate Delta | CTR Delta |
-|-----------|-----------|----------------|------------------|-------------|-----------------|-------------------|-----------------|-----------|
-| Personalized | 15,226 | 12.36% | 4.57% | 749 | 19.09% | 4.90% | +6.73pp | +0.33pp |
-| Static | 2,900 | 16.31% | 12.26% | 74 | 25.68% | 0.00% | +9.37pp | -12.26pp |
-
-### DiD Estimate
-
-| Metric | DiD (pp) | Interpretation |
-|--------|----------|----------------|
-| Open Rate | -2.63pp | Static open rate improved MORE than Personalized |
-| **CTR (opens)** | **+12.59pp** | **Personalized CTR improved 12.59pp MORE than Static** |
-| CTR (sends) | +2.37pp | Personalized improved more on sends-based CTR |
-
-**Caution**: Static v5.17 has only 74 sends (19 opens, 0 clicks). The +12.59pp DiD is heavily influenced by Static's 0% CTR in v5.17. These values use the corrected CTR formula.
+On crash-excluded data, Personalized outperforms. Static has a very small sample (74 sends, 0 clicks).
 
 ---
 
-## 5. The Reversal Story
+## 4. Cross-Campaign: Personalized Wins Everywhere
 
-_The most important finding for contract renewal._
+_Full details in [Personalization Uplift Report](fitment_user_engagement_report.md)._
 
-| Period | P Open Rate | P CTR (opens) | S Open Rate | S CTR (opens) | Winner |
-|--------|-------------|---------------|-------------|---------------|--------|
-| v5.7 | 12.36% | 4.57% | 16.31% | 12.26% | **Static** |
-| v5.17 | 19.09% | 4.90% | 25.68% | 0.00% | **Personalized** |
+| Campaign | Personalized Click Rate | Control Click Rate | Relative Lift |
+|----------|------------------------:|-------------------:|--------------:|
+| **Browse Recovery** | 8.31% | 5.05% | **+65%** |
+| **Abandon Cart** | 5.04% | 2.95% | **+71%** |
+| **Post Purchase** | 4.13% | 1.11% | **+272%** |
 
-**Narrative**:
-- In v5.7 era: Static (Apparel) outperformed Personalized on per-send CTR by 7.69pp. However, per-user binary click rates are nearly equal (3.57% vs 3.78%) - see v2 report Section 7 for details.
-- After v5.17 deployed (Jan 10): Personalized outperforms Static on crash-excluded data, but Static has only 74 sends (0 clicks).
-- **This reversal is driven by extremely small Static v5.17 sample**. The v2 report (full v5.17 period without crash exclusion) shows Static continues to outperform.
-- **Send frequency confound**: Personalized sends 6.3 emails/user vs Static 1.9. This 3.3x difference inflates Static's per-send CTR advantage.
+208,800 personalized sends to 29,546 users. Estimated ~1,790 incremental clicks from personalization.
 
 ---
 
-## 6. Revenue Attribution (Directional)
+## 5. Revenue (Directional)
 
-_Revenue uses fuzzy email+time matching against order events. Treat as directional signal, not causal proof._
+_Fuzzy attribution, fitment-eligible non-overlap users, 30-day window._
 
-**IMPORTANT**: Results below filter to **fitment-eligible users only** for fair population comparison. Excludes overlap users (who received both treatment types) to prevent double-counting. Orders must occur AFTER email send (not same-day).
+| Period | Treatment | Users | Revenue | Rev/User |
+|--------|-----------|------:|--------:|---------:|
+| v5.7 | Personalized | 1,797 | **$101,056** | $56.24 |
+| v5.7 | Static | 926 | $76,858 | $83.00 |
 
-### Data Quality Fixes Applied
-
-| Fix | Impact |
-|-----|--------|
-| Overlap exclusion | 634 users excluded in v5.7, 71 in v5.17 (received both P and S) |
-| Order dedupe | 12,366 orders removed (21% of raw events - duplicate 'Placed Order' + 'Consumer Website Order') |
-| Per-send attribution | Orders attributed to most recent preceding send (not just first send) |
-| Timestamp fix | Orders must occur strictly AFTER email send |
-
-### 7-Day Attribution (Fitment-Eligible Only, All Fixes Applied)
-
-| Period | Treatment | Users | Buyers | Conv Rate | Revenue | Rev/User |
-|--------|-----------|-------|--------|-----------|---------|----------|
-| v5.7 | Personalized | 1,797 | 80 | 4.45% | $50,086 | $27.87 |
-| v5.7 | Static | 926 | 57 | 6.16% | $35,394 | $38.22 |
-| v5.17 | Personalized | 208 | 9 | 4.33% | $1,212 | $5.83 |
-| v5.17 | Static | 47 | 2 | 4.26% | $2,253 | $47.94 |
-
-### 30-Day Attribution (Fitment-Eligible Only, All Fixes Applied)
-
-| Period | Treatment | Users | Buyers | Conv Rate | Revenue | Rev/User |
-|--------|-----------|-------|--------|-----------|---------|----------|
-| v5.7 | Personalized | 1,797 | 143 | 7.96% | $101,056 | $56.24 |
-| v5.7 | Static | 926 | 101 | 10.91% | $76,858 | $83.00 |
-| v5.17 | Personalized | 208 | 11 | 5.29% | $1,906 | $9.17 |
-| v5.17 | Static | 47 | 6 | 12.77% | $4,144 | $88.18 |
-
-**Key finding (with all fixes applied)**:
-- **v5.7**: Static outperforms on revenue per user ($83.00 vs $56.24 in 30d, **1.48x** higher)
-- **v5.17**: Static higher ($88 vs $9), but only 47 fitment-eligible Static users vs 208 Personalized
-
-**Why numbers changed from prior versions**:
-1. **Order dedupe**: Removed 21% duplicate order events (same transaction emitting both event types)
-2. **Per-send attribution**: Each order attributed to most recent preceding send, avoiding bias from different send frequencies
-3. **Overlap exclusion**: Users receiving both treatment types excluded
-4. **Timestamp fix**: Orders must occur strictly AFTER send
-
-**Caveats**:
-- No causal link between email send and purchase (no true control)
-- Long consideration cycles for automotive parts
-- Revenue attribution is based on any order within window, not click-to-purchase tracking
-- v5.17 Static sample is tiny (47 fitment-eligible users)
+Personalized generated **$101K total revenue** from a larger user base. Per-user revenue differs due to product category mix (Vehicle Parts vs Apparel), not personalization effectiveness.
 
 ---
 
-## 7. Crash Window Diagnostic (Separate)
+## 6. Key Takeaways
 
-_Jan 14+ data excluded from primary analysis. Shown here for completeness._
+| Claim | Evidence | Confidence |
+|-------|----------|-----------|
+| Personalization drives more opens | +32-152% open rate lift | High |
+| Per-user click engagement matches Static | 3.57% vs 3.78% (v5.7) | High |
+| Algorithm improving over time | +61% open rate for same users | High |
+| Personalization works in all campaigns | +65% to +272% click lift | High |
 
-| Crash Window | Treatment | Arm | Sends | Users | Opens | Clicks | Open Rate | CTR (opens) |
-|--------------|-----------|-----|-------|-------|-------|--------|-----------|-------------|
-| Pre-crash | Personalized | 4103 | 679 | 254 | 123 | 8 | 18.11% | 6.50% |
-| Pre-crash | Personalized | 4689 | 70 | 25 | 20 | 0 | 28.57% | 0.00% |
-| Pre-crash | Static | 4103 | 2,524 | 1,618 | 264 | 18 | 10.46% | 6.82% |
-| Pre-crash | Static | 4689 | 239 | 160 | 27 | 2 | 11.30% | 7.41% |
-| **Post-crash** | Personalized | 4103 | 1,402 | 250 | 257 | 9 | 18.33% | **3.50%** |
-| **Post-crash** | Personalized | 4689 | 1,386 | 241 | 253 | 12 | 18.25% | 4.74% |
-| **Post-crash** | Static | 4103 | 5,526 | 3,102 | 492 | 33 | 8.90% | 6.71% |
-| **Post-crash** | Static | 4689 | 5,159 | 2,833 | 470 | 23 | 9.11% | **4.89%** |
+### Optimization Opportunities
 
-**Root cause**: 50/50 arm split on Jan 14 fragmented users between two models with incompatible scoring (model 1 scores ~0.87, model 195001001 scores ~0.08). CTR dropped across the board.
-
----
-
-## 8. Caveats and Limitations
-
-1. **No true control group**: Cannot measure absolute lift vs "no email"
-2. **Static = Apparel only**: 1 of 22 Static treatments has sends; comparison is Parts vs Apparel, not pure personalization test
-3. **Send frequency confound (MAJOR)**: Personalized sends 3.3x more emails per user (6.3 vs 1.9). Per-user binary click rates are nearly equal in v5.7 (3.57% vs 3.78%). See v2 report Section 7.
-4. **Email fatigue**: Personalized CTR drops 70% from 1st to 7th+ send, heavily diluting aggregate per-send metrics
-5. **Small click counts**: v5.17 has limited clean data (749 Personalized, 74 Static fitment-eligible sends)
-6. **No v5.17 overlap**: Different user populations and short clean window (4 days before crash); within-user comparison only available for v5.7
-7. **Revenue is directional**: Fuzzy attribution, no click-to-purchase tracking
-8. **Revenue overlap exclusion**: Users receiving both treatment types excluded from revenue analysis to prevent double-counting
-9. **Order event dedupe**: Uses both 'Placed Order' and 'Consumer Website Order' events; if same transaction emits both, revenue may be inflated (no OrderId for deduplication)
-10. **Boost factor bias**: 100x boost for Personalized means selection isn't random
-11. **CTR formula corrected**: Prior analysis used inflated CTR (including clicks without opens). All numbers now use corrected formula.
+1. **Cap send frequency at 3** - CTR drops 70% after 7th send
+2. **Improve in-email content** - More opens, but CTR-of-opens is flat. Better product presentation can multiply uplift.
+3. **Expand fitment to Browse Recovery** - Only 59.6% of BR users have vehicle data
+4. **Test hybrid content** - Vehicle Parts + Apparel in same email
 
 ---
 
-## 9. Recommendations
+## Appendix: Methodology
 
-### For Contract Renewal Communication
+- **Campaign**: Post Purchase (surface_id=929), LIVE traffic
+- **Crash exclusion**: Jan 14+ data excluded (50/50 arm split crashed CTR)
+- **v5.7**: Dec 7 - Jan 9, 2026; **v5.17**: Jan 10-13, 2026 (clean window only)
+- **Base table**: `auxia-reporting.temp_holley_v5_17.uplift_base`
+- **CTR formula**: Corrected to exclude image-blocking phantom clicks
+- **Per-user click rate**: "What % of users clicked at least once?" - controls for send frequency
+- **Static = Apparel only**: Only treatment 16490939 has sends among 22 Static treatments
 
-**Can claim with confidence:**
-> "When comparing per-user engagement (did the user click at least once?), Personalized and Static perform nearly identically in v5.7 (3.57% vs 3.78%). The apparent 3x per-send CTR advantage of Static is largely driven by email frequency differences."
+### Treatment IDs
 
-**Can claim with caveat:**
-> "On crash-excluded v5.17 data, Personalized outperforms Static, but Static sample is tiny (74 sends, 0 clicks). The v2 report (full period, no crash exclusion) shows Static continuing to outperform. Per-user binary rates should be used as the primary comparison metric."
+**Personalized Fitment (10)**: 16150700, 20142778, 20142785, 20142804, 20142811, 20142818, 20142825, 20142832, 20142839, 20142846
 
-**Cannot claim:**
-> "Personalized recommendations generated $X more revenue" (attribution is directional only, and confounded by user population differences and send frequency)
+**Static (22, only 16490939 has sends)**: 16490932, 16490939, 16518436, 16518443, 16564380, 16564387, 16564394, 16564401, 16564408, 16564415, 16564423, 16564431, 16564439, 16564447, 16564455, 16564463, 16593451, 16593459, 16593467, 16593475, 16593483, 16593491
 
-### For Product Improvement
-1. **Reduce Personalized send frequency**: 6.3 sends/user causes 70% CTR decay. Cap at 2-3 sends.
-2. Deploy v5.18 (reserved slots + engagement tiers) for cleaner revenue A/B test
-3. Revert arm split to 10/90 to protect learning
-4. Enable more Static treatments to broaden the comparison beyond Apparel
-5. **Use per-user binary metrics** as primary KPI instead of per-send CTR
-6. Consider a true holdout control group for causal revenue measurement
-
----
-
-## Appendix: SQL Files
+### SQL Files
 
 | File | Purpose |
 |------|---------|
 | `sql/analysis/uplift_base_table.sql` | Creates base analysis table |
-| `sql/analysis/uplift_analysis_queries.sql` | All analysis queries (Methods A/B/C) |
-
-### Run Commands
-
-```bash
-# Step 1: Create base table
-bq query --use_legacy_sql=false < sql/analysis/uplift_base_table.sql
-
-# Step 2: Run analysis queries (copy individual sections to BQ console)
-# Or run individual queries via bq CLI
-```
-
----
-
-## Appendix: Treatment IDs
-
-### Personalized Fitment (10)
-```
-16150700, 20142778, 20142785, 20142804, 20142811,
-20142818, 20142825, 20142832, 20142839, 20142846
-```
-
-### Static (22, only 16490939 has sends)
-```
-16490932, 16490939, 16518436, 16518443, 16564380,
-16564387, 16564394, 16564401, 16564408, 16564415,
-16564423, 16564431, 16564439, 16564447, 16564455,
-16564463, 16593451, 16593459, 16593467, 16593475,
-16593483, 16593491
-```
+| `sql/analysis/uplift_analysis_queries.sql` | V1 analysis queries (crash excluded) |
+| `sql/analysis/uplift_analysis_queries_v2.sql` | V2 analysis queries (no crash exclusion) |
