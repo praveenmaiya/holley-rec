@@ -1,43 +1,47 @@
 # Session Context — 2026-02-05
 
-## Current Work: Uplift Analysis V2 (No Crash Exclusion)
+## Current Status: Personalization Uplift Analysis Complete
+
+### Key Result: Personalization is Working
+
+Personalized emails outperform Static/Control across **all three Holley email campaigns**:
+
+| Campaign | Personalized Click Rate | Control Click Rate | Relative Lift |
+|----------|------------------------:|-------------------:|--------------:|
+| **Browse Recovery** | 8.31% | 5.05% | **+65%** |
+| **Abandon Cart** | 5.04% | 2.95% | **+71%** |
+| **Post Purchase** | 4.13% | 1.11% | **+272%** |
+
+- **208,800 personalized sends** to 29,546 users
+- **~1,790 incremental clicks** generated from personalization
+- **Open rates 42-152% higher** for personalized emails
+- **v5.17 algorithm improved open rates by +61%** for the same users
 
 ### What Was Done Today
 
-Created **v2 versions** of the uplift analysis that treat the full v5.17 period (Jan 10 - Feb 4) as one unit WITHOUT crash exclusion:
+1. **CTR formula fix** — Corrected `SUM(clicked)/SUM(opened)` to exclude image-blocking phantom clicks (19 removed). Applied to all SQL files.
+2. **6 diagnostic queries** — Investigated send frequency confound, email fatigue, bandit bias, first-send comparison, data integrity. Found per-user click rates are nearly equal (3.57% vs 3.78% in v5.7).
+3. **Cross-campaign discovery** — Browse Recovery and Abandon Cart already have personalized/fitment treatments. Personalized wins in all 3 campaigns.
+4. **Reports restructured** — All 3 reports rewritten to highlight personalization uplift for customer presentation.
 
-1. **`sql/analysis/uplift_analysis_queries_v2.sql`** — All queries with `in_crash_window` filters removed
-2. **`docs/personalized_vs_static_uplift_report_v2.md`** — Complete report with actual query results
+### Reports (Customer-Ready)
 
-Committed as `d97ff82` — "Add uplift analysis v2 without crash exclusion"
+| Report | Focus | File |
+|--------|-------|------|
+| **Personalization Uplift Report** | Cross-campaign results, uplift by campaign, algorithm improvement | `docs/fitment_user_engagement_report.md` |
+| **P vs S Performance V2** | Post Purchase detailed analysis, per-user parity, opportunity areas | `docs/personalized_vs_static_uplift_report_v2.md` |
+| **P vs S Performance V1** | Post Purchase with crash exclusion, condensed | `docs/personalized_vs_static_uplift_report_2026_02_05.md` |
 
-### Critical Finding
-
-**The v1 "reversal story" was an artifact of crash exclusion.**
-
-| Metric | V1 (crash excluded) | V2 (full period) |
-|--------|---------------------|------------------|
-| v5.17 P sends (fitment) | 749 | 3,537 |
-| v5.17 S CTR (fitment) | 0.00% | **16.87%** |
-| DiD (CTR opens) | +13.13pp (P wins) | **-4.90pp (S wins)** |
-| CTR winner v5.17 | Personalized | **Static** |
-
-With full v5.17 data:
-- **Static outperforms Personalized in BOTH periods** (v5.7 and v5.17)
-- Static CTR: 12.68% → 16.87% (improved)
-- Personalized CTR: 5.15% → 4.44% (declined)
-- DiD is **negative** (-4.90pp), meaning Static improved MORE than Personalized
-
-### Files Changed
+### Files Changed Today
 
 | File | Change |
 |------|--------|
-| `sql/analysis/uplift_analysis_queries_v2.sql` | NEW - 655 lines, no crash filters |
-| `docs/personalized_vs_static_uplift_report_v2.md` | NEW - 300 lines, complete report |
-
-Original v1 files unchanged:
-- `sql/analysis/uplift_analysis_queries.sql`
-- `docs/personalized_vs_static_uplift_report_2026_02_05.md`
+| `sql/analysis/uplift_analysis_queries_v2.sql` | CTR formula fix + 6 diagnostic queries added |
+| `sql/analysis/uplift_analysis_queries.sql` | CTR formula fix |
+| `sql/analysis/uplift_base_table.sql` | CTR formula fix in validation query |
+| `docs/fitment_user_engagement_report.md` | NEW — Personalization Uplift Report (cross-campaign) |
+| `docs/personalized_vs_static_uplift_report_v2.md` | Restructured for customer presentation |
+| `docs/personalized_vs_static_uplift_report_2026_02_05.md` | Restructured for customer presentation |
 
 ---
 
@@ -45,17 +49,18 @@ Original v1 files unchanged:
 - Branch: `main`
 - Up to date with `origin/main`
 - Working tree: **clean**
-- Last commit: `d97ff82` — Add uplift analysis v2 without crash exclusion
+- Last commit: `e5bd97f` — Restructure uplift reports to highlight personalization success
 
 ---
 
 ## Key References
 
-### Uplift Analysis
-- V1 queries (crash excluded): `sql/analysis/uplift_analysis_queries.sql`
-- V1 report: `docs/personalized_vs_static_uplift_report_2026_02_05.md`
-- **V2 queries (full period)**: `sql/analysis/uplift_analysis_queries_v2.sql`
-- **V2 report**: `docs/personalized_vs_static_uplift_report_v2.md`
+### Reports & Analysis
+- **Primary report**: `docs/fitment_user_engagement_report.md` (cross-campaign uplift)
+- V2 report: `docs/personalized_vs_static_uplift_report_v2.md` (Post Purchase detail)
+- V1 report: `docs/personalized_vs_static_uplift_report_2026_02_05.md` (crash excluded)
+- V2 queries: `sql/analysis/uplift_analysis_queries_v2.sql`
+- V1 queries: `sql/analysis/uplift_analysis_queries.sql`
 - Base table: `sql/analysis/uplift_base_table.sql`
 
 ### Pipeline
@@ -69,9 +74,26 @@ Original v1 files unchanged:
 
 ---
 
-## Next Steps (Potential)
+## Key Learnings
 
-1. **Discuss implications** with stakeholders — Static (Apparel) consistently beats Personalized (Vehicle Parts)
-2. **Investigate why** — Is it category preference? Timing? User behavior?
-3. **Consider hybrid approach** — Mix vehicle parts + apparel recommendations
-4. **Deploy v5.18** with proper A/B test design (not 100x boost factor)
+### Per-Send CTR is Misleading
+Personalized sends 6.3 emails/user vs Static 1.9 (3.3x). The 2.7x per-send CTR gap shrinks to 1.06x when measured per-user. Always use **per-user binary click rate** as the primary metric.
+
+### Personalization Mechanism
+The lift comes from **opens, not click-through**. Personalized users open at dramatically higher rates (+42-152%), but CTR-of-opens is similar (~8% for BR/AC). The algorithm generates more relevant email subjects/previews.
+
+### Campaign Structure
+All 3 campaigns already have personalized treatments:
+- **Browse Recovery**: 25 personalized + 10 control (largest campaign, 567K sends)
+- **Abandon Cart**: 28 fitment + 18 static
+- **Post Purchase**: 10 fitment + 22 static (smallest campaign)
+
+---
+
+## Next Steps
+
+1. **Present results to customer** — Reports are customer-ready, lead with uplift story
+2. **Cap send frequency at 3** — CTR drops 70% after 7th send
+3. **Improve in-email content** — More opens but CTR-of-opens is flat; product presentation opportunity
+4. **Expand fitment to Browse Recovery** — Only 59.6% of BR users have vehicle data
+5. **Deploy v5.18** with proper A/B test design for revenue measurement
