@@ -88,7 +88,14 @@ WHERE event_name = 'Consumer Website Order'
 |--------|------|-------------|
 | `user_id` | STRING | User who received treatment |
 | `treatment_id` | INT64 | Treatment identifier |
-| `sent_timestamp_micros` | TIMESTAMP | When sent |
+| `treatment_tracking_id` | STRING | Unique send ID (join key to interactions) |
+| `treatment_sent_timestamp` | TIMESTAMP | When sent |
+| `arm_id` | INT64 | Arm (4103=Random, 4689=Bandit) |
+| `model_id` | INT64 | Model (1=Random, 195001001=Bandit) |
+| `score` | FLOAT64 | Model score at selection time |
+| `boost_factor` | FLOAT64 | Boost weight applied |
+| `surface_id` | INT64 | Channel (929=Email) |
+| `request_source` | STRING | `LIVE`, `SIMULATION`, or `QA` |
 
 ---
 
@@ -99,6 +106,7 @@ WHERE event_name = 'Consumer Website Order'
 |--------|------|-------------|
 | `user_id` | STRING | User who interacted |
 | `treatment_id` | INT64 | Treatment identifier |
+| `treatment_tracking_id` | STRING | Unique send ID (join key from treatment_history_sent) |
 | `interaction_type` | STRING | `VIEWED` (opened) or `CLICKED` |
 | `interaction_timestamp_micros` | TIMESTAMP | When interaction occurred |
 
