@@ -79,9 +79,6 @@ htmlcov/
 # Ruff
 .ruff_cache/
 
-# Session context
-CONTEXT.md
-
 # OS
 .DS_Store
 Thumbs.db
