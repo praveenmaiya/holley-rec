@@ -5,20 +5,23 @@ NIG Thompson Sampling Convergence Simulation
 Simulates the Normal-Inverse-Gamma Thompson Sampling bandit to determine
 how long it takes to differentiate between treatments at various data volumes.
 
-Hypotheses tested:
-  A: Current state — 30+ treatments, ~3 clicks/week each, NIG(1,1,0,1)
-  B: Reduced treatments — 10 treatments (consolidate similar ones)
-  C: Informative prior — NIG(alpha=10, beta=0.3, mu=0.05, lambda=100)
-  D: Combined — 10 treatments + informative prior
+Scenarios tested (using corrected numbers from investigation):
+  A: Current state — 20 high-traffic treatments, ~37 opens/treatment/day
+  B: Reduced to 10 treatments (~75 opens/treatment/day)
+  C: Per-user auction — 7 treatments (what each user actually sees)
+  D: 10 treatments + informative prior
 
-For each scenario, simulates daily NIG updates over 180 days and measures
-how long until the best treatment is reliably identified.
+Key corrections from earlier version:
+  - 92 treatments in bandit pool, but only 20 with 100+ sends/day (75% of traffic)
+  - Per user request: only 4-7 treatments eligible (fitment-filtered)
+  - Model trains on opens (not sends): ~750 opens/day total
+  - CTRs are CTR-of-opens (5-12%), not CTR-of-sends (0.5-2%)
 
 Usage:
   python3 src/nig_convergence_simulation.py
 
 Based on: docs/bandit-models-deep-analysis.md (NIG math formulas)
-Data from: Q16 of sql/analysis/bandit_investigation_phase2.sql
+Data from: Q12/Q16 of sql/analysis/bandit_investigation_phase2.sql
 
 No external dependencies — uses only Python standard library.
 """
@@ -91,8 +94,8 @@ class ScenarioConfig:
     """Configuration for a simulation scenario."""
     name: str
     num_treatments: int
-    sends_per_day_total: int  # Total sends across all treatments
-    true_ctrs: list           # True CTR for each treatment
+    opens_per_day_total: int  # Total opens across all treatments (not sends!)
+    true_ctrs: list           # True CTR of opens for each treatment
     prior: NIGParams          # Starting prior for each treatment
     description: str
 
@@ -104,6 +107,9 @@ def simulate_scenario(config: ScenarioConfig, n_days: int = 180,
 
     The model is STATELESS -- retrained from scratch each day using ALL
     historical data (matching Auxia's batch retraining approach).
+
+    Observations = opens (not sends). Rewards = clicks.
+    CTR = clicks/opens (CTR of opens).
 
     Returns dict with convergence metrics.
     """
@@ -124,21 +130,21 @@ def simulate_scenario(config: ScenarioConfig, n_days: int = 180,
         # Cumulative data storage (stateless model retrains from scratch)
         all_rewards = [[] for _ in range(config.num_treatments)]
 
-        # Daily sends per treatment (roughly uniform, as observed)
-        sends_per_treatment = config.sends_per_day_total // config.num_treatments
+        # Daily opens per treatment (roughly uniform among competing treatments)
+        opens_per_treatment = config.opens_per_day_total // config.num_treatments
 
         winner_identified_day = None
         daily_means = []
         daily_stddevs = []
 
         for day in range(n_days):
-            # Generate today's data: each treatment gets ~sends_per_treatment sends
+            # Generate today's data: each treatment gets ~opens_per_treatment opens
             for t in range(config.num_treatments):
-                n_sends = sends_per_treatment + rng.randint(-2, 2)
-                n_sends = max(1, n_sends)
-                # Generate Bernoulli draws
+                n_opens = opens_per_treatment + rng.randint(-3, 3)
+                n_opens = max(1, n_opens)
+                # Generate Bernoulli clicks from opens
                 rewards = [1 if rng.random() < config.true_ctrs[t] else 0
-                           for _ in range(n_sends)]
+                           for _ in range(n_opens)]
                 all_rewards[t].extend(rewards)
 
             # Retrain from scratch (stateless, like Auxia's pipeline)
@@ -199,8 +205,8 @@ def simulate_scenario(config: ScenarioConfig, n_days: int = 180,
         'scenario': config.name,
         'description': config.description,
         'num_treatments': config.num_treatments,
-        'sends_per_day': config.sends_per_day_total,
-        'sends_per_treatment_day': config.sends_per_day_total // config.num_treatments,
+        'opens_per_day': config.opens_per_day_total,
+        'opens_per_treatment_day': config.opens_per_day_total // config.num_treatments,
         'median_days_to_converge': median(finite_days) if finite_days else float('inf'),
         'mean_days_to_converge': mean(finite_days) if finite_days else float('inf'),
         'p90_days_to_converge': percentile(finite_days, 90),
@@ -216,73 +222,84 @@ def simulate_scenario(config: ScenarioConfig, n_days: int = 180,
 
 def build_scenarios() -> list:
     """
-    Build the four simulation scenarios using real data from Q16.
+    Build the four simulation scenarios using corrected data.
 
-    Real data (from Holley bandit arm, 120-day window):
-    - ~5,000 sends/day total in bandit arm
-    - 55-87 active treatments (Q12 finding!)
-    - Average CTR of sends: ~1% (clicks/sends)
-    - Average CTR of opens: ~7% (clicks/opens)
-    - Best treatment CTR: ~2.5% of sends, worst: ~0.2%
+    Corrected numbers (from bandit arm analysis, Jan 14 - Feb 6):
+    - 92 treatments in pool, 20 with 100+ sends/day (75% of traffic)
+    - Per user request: only 4-7 treatments eligible (fitment-filtered)
+    - ~5,000 sends/day total → ~750 opens/day (15% open rate)
+    - Model trains on opens, rewards = clicks
+    - CTR of opens ranges from ~3% to ~12% across treatments
+
+    Real CTR of opens from Q16 (top treatments):
+      21265478: 11.53%, 21265506: 10.04%, 21265458: 9.51%,
+      21265451: 9.13%, 17049625: 6.98%, 16490939: 5.85%,
+      21265485: 5.30%
     """
 
-    # -- Scenario A: Current state (30 treatments, uninformative prior) --
-    # True CTRs based on real Q16 data (clicks/sends):
-    # Most treatments cluster around 0.5-1.5%, with a few outliers
-    current_ctrs = (
-        [0.025, 0.022, 0.020]           # 3 "best" treatments
-        + [0.018, 0.015, 0.015, 0.014,
-           0.012, 0.012, 0.010, 0.010,
-           0.010, 0.009, 0.009, 0.008]  # 12 "average" treatments
-        + [0.008, 0.007, 0.007, 0.006,
-           0.006, 0.005, 0.005, 0.005,
-           0.004, 0.004, 0.003, 0.003,
-           0.002, 0.002, 0.001]          # 15 "poor" treatments
-    )
+    total_opens_per_day = 750  # 5000 sends * 15% open rate
+
+    # -- Scenario A: Current state (20 high-traffic treatments) --
+    # These 20 treatments have 100+ sends/day and account for 75% of traffic.
+    # CTR of opens based on Q16 data: ranges from ~3% to ~12%.
+    ctrs_20 = [
+        0.115, 0.100, 0.095, 0.091,   # 4 "best" treatments (9-12%)
+        0.080, 0.070, 0.065, 0.060,    # 4 "good" treatments (6-8%)
+        0.058, 0.053, 0.050, 0.048,    # 4 "average" treatments (5-6%)
+        0.045, 0.040, 0.038, 0.035,    # 4 "below average" (3.5-4.5%)
+        0.033, 0.030, 0.028, 0.025,    # 4 "poor" (2.5-3.3%)
+    ]
 
     scenario_a = ScenarioConfig(
-        name="A: Current State",
-        num_treatments=30,
-        sends_per_day_total=5000,
-        true_ctrs=current_ctrs,
+        name="A: Current (20 treatments)",
+        num_treatments=20,
+        opens_per_day_total=total_opens_per_day,
+        true_ctrs=ctrs_20,
         prior=NIGParams(mu=0, lam=1, alpha=1, beta=1),
-        description="30 treatments, ~167 sends/treatment/day, NIG(0,1,1,1) prior"
+        description="20 high-traffic treatments, ~37 opens/trt/day, NIG(0,1,1,1) prior"
     )
 
     # -- Scenario B: Reduced to 10 treatments --
-    reduced_ctrs = [0.025, 0.018, 0.015, 0.012, 0.010,
-                    0.008, 0.007, 0.005, 0.003, 0.002]
+    # Keep the top 10 by volume; consolidate the rest.
+    # 750 opens/day / 10 = 75 opens/treatment/day
+    ctrs_10 = [0.115, 0.091, 0.070, 0.058, 0.050,
+               0.045, 0.038, 0.033, 0.028, 0.025]
 
     scenario_b = ScenarioConfig(
         name="B: 10 Treatments",
         num_treatments=10,
-        sends_per_day_total=5000,
-        true_ctrs=reduced_ctrs,
+        opens_per_day_total=total_opens_per_day,
+        true_ctrs=ctrs_10,
         prior=NIGParams(mu=0, lam=1, alpha=1, beta=1),
-        description="10 treatments, 500 sends/treatment/day, NIG(0,1,1,1) prior"
+        description="10 treatments, ~75 opens/trt/day, NIG(0,1,1,1) prior"
     )
 
-    # -- Scenario C: Informative prior --
-    # Set prior based on historical CTR knowledge:
-    # mu=0.008 (known ~0.8% avg CTR), lambda=100 (moderate confidence),
-    # alpha=10 (some shape), beta=0.3 (low variance)
+    # -- Scenario C: Per-user auction (7 treatments) --
+    # Each user only sees 4-7 treatments (fitment-filtered). Median is ~6.
+    # This models the ACTUAL competition per user request.
+    # 750 opens/day / 7 = 107 opens/treatment/day
+    # CTR spread within a user's eligible set is narrower (same fitment segment).
+    ctrs_7 = [0.100, 0.085, 0.070, 0.058, 0.045, 0.035, 0.025]
+
     scenario_c = ScenarioConfig(
-        name="C: Informative Prior",
-        num_treatments=30,
-        sends_per_day_total=5000,
-        true_ctrs=current_ctrs,
-        prior=NIGParams(mu=0.008, lam=100, alpha=10, beta=0.3),
-        description="30 treatments, 167 sends/treatment/day, NIG(0.008, 100, 10, 0.3)"
+        name="C: Per-user (7 treatments)",
+        num_treatments=7,
+        opens_per_day_total=total_opens_per_day,
+        true_ctrs=ctrs_7,
+        prior=NIGParams(mu=0, lam=1, alpha=1, beta=1),
+        description="7 treatments (per-user fitment), ~107 opens/trt/day, NIG(0,1,1,1)"
     )
 
-    # -- Scenario D: Combined (fewer treatments + informative prior) --
+    # -- Scenario D: 10 treatments + informative prior --
+    # Prior based on known average CTR of opens (~6%).
+    # mu=0.06, lambda=50 (moderate confidence), alpha=10, beta=0.3
     scenario_d = ScenarioConfig(
-        name="D: 10 Treatments + Informative Prior",
+        name="D: 10 Trts + Informative Prior",
         num_treatments=10,
-        sends_per_day_total=5000,
-        true_ctrs=reduced_ctrs,
-        prior=NIGParams(mu=0.008, lam=100, alpha=10, beta=0.3),
-        description="10 treatments, 500 sends/treatment/day, NIG(0.008, 100, 10, 0.3)"
+        opens_per_day_total=total_opens_per_day,
+        true_ctrs=ctrs_10,
+        prior=NIGParams(mu=0.06, lam=50, alpha=10, beta=0.3),
+        description="10 treatments, ~75 opens/trt/day, NIG(0.06, 50, 10, 0.3)"
     )
 
     return [scenario_a, scenario_b, scenario_c, scenario_d]
@@ -290,14 +307,15 @@ def build_scenarios() -> list:
 
 def print_convergence_table(results: list):
     """Print a formatted results table."""
-    print("\n" + "=" * 100)
+    print("\n" + "=" * 105)
     print("NIG THOMPSON SAMPLING CONVERGENCE SIMULATION RESULTS")
-    print("=" * 100)
+    print("(observations = opens, rewards = clicks, CTR = clicks/opens)")
+    print("=" * 105)
     print(f"{'Scenario':<40} {'Median':>8} {'Mean':>8} {'P90':>8} {'Never%':>8} "
           f"{'90d%':>8} {'180d%':>8}")
     print(f"{'':40} {'(days)':>8} {'(days)':>8} {'(days)':>8} {'convg':>8} "
           f"{'correct':>8} {'correct':>8}")
-    print("-" * 100)
+    print("-" * 105)
 
     for r in results:
         med = f"{r['median_days_to_converge']:.0f}" if r['median_days_to_converge'] != float('inf') else "NEVER"
@@ -308,7 +326,7 @@ def print_convergence_table(results: list):
               f"{r['winner_correct_90d_pct']:>7.1f}% "
               f"{r['winner_correct_180d_pct']:>7.1f}%")
 
-    print("-" * 100)
+    print("-" * 105)
 
 
 def print_posterior_evolution(result: dict, days_to_show: list = None):
@@ -361,9 +379,9 @@ def print_scenario_details(results: list):
         print(f"  {r['description']}")
         print(f"{'=' * 80}")
         print(f"  Treatments: {r['num_treatments']}")
-        print(f"  Sends/day total: {r['sends_per_day']:,}")
-        print(f"  Sends/treatment/day: {r['sends_per_treatment_day']}")
-        print(f"  True best CTR: {r['true_ctrs'][r['true_best']]:.2%}")
+        print(f"  Opens/day total: {r['opens_per_day']:,}")
+        print(f"  Opens/treatment/day: {r['opens_per_treatment_day']}")
+        print(f"  True best CTR (of opens): {r['true_ctrs'][r['true_best']]:.2%}")
 
         med = r['median_days_to_converge']
         if med == float('inf'):
@@ -383,41 +401,47 @@ def print_key_finding(results: list):
     print("KEY FINDING")
     print("=" * 100)
 
-    a = results[0]  # Current state
-    d = results[3]  # Best scenario
+    a = results[0]  # Current state (20 treatments)
+    b = results[1]  # 10 treatments
+    c = results[2]  # Per-user (7 treatments)
 
-    if a['never_converged_pct'] > 50:
+    if a['median_days_to_converge'] == float('inf') or a['never_converged_pct'] > 40:
         print(f"""
-  At current data volume ({a['sends_per_day']:,} sends/day across {a['num_treatments']} treatments),
-  the NIG Thompson Sampling model CANNOT reliably identify the best treatment.
+  At current data volume ({a['opens_per_day']:,} opens/day across {a['num_treatments']} treatments),
+  the NIG Thompson Sampling model struggles to reliably identify the best treatment.
 
   - {a['never_converged_pct']:.0f}% of simulations never converged within 180 days
-  - Even after 180 days, only {a['winner_correct_180d_pct']:.0f}% correctly identified the winner
-  - The model correctly outputs posterior means near true CTR, but the CTR differences
-    between treatments (~0.5-1.5pp) are smaller than the posterior uncertainty
+  - Each treatment gets ~{a['opens_per_treatment_day']} opens/day with best CTR {a['true_ctrs'][0]:.1%}
+    = ~{a['opens_per_treatment_day'] * a['true_ctrs'][0]:.1f} clicks/day
 
-  ROOT CAUSE: Not a bug -- it's a fundamental data sparsity problem.
-  Each treatment gets ~{a['sends_per_treatment_day']} sends/day with ~{a['true_ctrs'][0]:.1%} CTR =
-  ~{a['sends_per_treatment_day'] * a['true_ctrs'][0]:.1f} clicks/day. This is insufficient
-  to shrink posteriors enough to differentiate treatments.
+  ROOT CAUSE: Not a bug -- structural data sparsity.
 """)
     else:
         print(f"""
-  Current state converges in ~{a['median_days_to_converge']:.0f} days (median).
+  Current state (20 treatments): converges in ~{a['median_days_to_converge']:.0f} days (median),
+  {a['never_converged_pct']:.0f}% never converge.
 """)
 
-    if d['never_converged_pct'] < a['never_converged_pct']:
-        improvement = a['never_converged_pct'] - d['never_converged_pct']
-        print(f"""  RECOMMENDED FIX: {d['scenario']}
-  - Reduces non-convergence from {a['never_converged_pct']:.0f}% to {d['never_converged_pct']:.0f}% (-{improvement:.0f}pp)
-  - Correct winner at 90 days: {d['winner_correct_90d_pct']:.0f}% (vs {a['winner_correct_90d_pct']:.0f}% current)
-  - Correct winner at 180 days: {d['winner_correct_180d_pct']:.0f}% (vs {a['winner_correct_180d_pct']:.0f}% current)
+    print(f"""  COMPARISON:
+  Scenario A ({a['num_treatments']} treatments): {a['median_days_to_converge']:.0f} days median, {a['never_converged_pct']:.0f}% never
+  Scenario B ({b['num_treatments']} treatments): {b['median_days_to_converge']:.0f} days median, {b['never_converged_pct']:.0f}% never
+  Scenario C ({c['num_treatments']} per-user):  {c['median_days_to_converge']:.0f} days median, {c['never_converged_pct']:.0f}% never
+
+  Reducing from {a['num_treatments']} to {b['num_treatments']} treatments = {a['opens_per_treatment_day']}→{b['opens_per_treatment_day']} opens/trt/day
+  Per-user view ({c['num_treatments']} treatments) = {c['opens_per_treatment_day']} opens/trt/day
 """)
 
 
 def main():
-    print("NIG Thompson Sampling Convergence Simulation")
-    print("=" * 50)
+    print("NIG Thompson Sampling Convergence Simulation (v2 — corrected)")
+    print("=" * 60)
+    print("Corrected inputs:")
+    print("  - Observations = opens (not sends)")
+    print("  - 750 opens/day total (5000 sends * 15% open rate)")
+    print("  - CTR = clicks/opens (5-12%, not 0.5-2%)")
+    print("  - 20 high-traffic treatments (not 30)")
+    print("  - Per-user: 4-7 treatments (fitment-filtered)")
+    print()
     print("Simulating 200 runs x 180 days for each scenario...")
     print()
 
@@ -436,7 +460,8 @@ def main():
     print_convergence_table(results)
     print_scenario_details(results)
     print_posterior_evolution(results[0])  # Current state
-    print_posterior_evolution(results[3])  # Best scenario
+    print_posterior_evolution(results[1])  # 10 treatments
+    print_posterior_evolution(results[2])  # Per-user
     print_key_finding(results)
 
 

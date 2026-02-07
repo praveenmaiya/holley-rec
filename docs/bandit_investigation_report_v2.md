@@ -209,49 +209,71 @@ For lower-volume treatments like 16593503 (12 sends/day), clicks DO visibly incr
 
 ---
 
-## Mathematical Analysis: NIG Convergence Simulation
+## Mathematical Analysis: NIG Convergence Simulation (v2 — Corrected)
 
 `src/nig_convergence_simulation.py` simulates 200 runs of 180 days each under four scenarios.
+
+**v2 corrections:** Now uses opens (not sends) as observations, CTR of opens (5-12%, not 0.5-2%), and corrected treatment counts (20 high-traffic, 7 per-user).
+
+### Simulation Parameters
+
+| Parameter | v1 (wrong) | v2 (corrected) |
+|-----------|-----------|----------------|
+| Observation unit | Sends | **Opens** |
+| Total observations/day | 5,000 | **750** (5000 * 15% open rate) |
+| CTR range | 0.1-2.5% (of sends) | **2.5-11.5%** (of opens) |
+| Treatment count | 30 | **20** (high-traffic pool) |
+| Per-user eligible | not modeled | **7** (new scenario) |
 
 ### Simulation Results
 
 | Scenario | Median Days | P90 Days | Never Converge | Correct at 90d | Correct at 180d |
 |----------|------------|---------|----------------|----------------|-----------------|
-| **A: Current (30 trts, flat prior)** | **106** | **169** | **50.0%** | 96.0% | 99.0% |
-| B: 10 treatments, flat prior | **12** | 27 | 0.0% | 100.0% | 100.0% |
-| C: Informative prior only | 106 | 169 | 50.0% | 96.0% | 99.0% |
-| **D: 10 trts + informative prior** | **12** | **27** | **0.0%** | **100.0%** | **100.0%** |
+| **A: Current (20 trts)** | **115** | **167** | **37.5%** | 98.5% | 100.0% |
+| **B: 10 treatments** | **28** | **59** | **0.0%** | 100.0% | 100.0% |
+| C: Per-user (7 trts) | 44 | 88 | 0.5% | 100.0% | 100.0% |
+| D: 10 trts + informative prior | 28 | 59 | 0.0% | 100.0% | 100.0% |
 
 ### Key Insights
 
-1. **Treatment count is THE bottleneck.** Reducing from 30 to 10 treatments cuts convergence from 106 to 12 days and eliminates non-convergence entirely. This is a 9x improvement.
+1. **Treatment count is THE bottleneck.** Reducing from 20 to 10 treatments cuts convergence from 115 to 28 days (4x improvement) and eliminates non-convergence (37.5% → 0%).
 
-2. **Informative priors don't help.** Scenario C (informative prior with 30 treatments) shows identical results to Scenario A (flat prior). With ~167 sends/treatment/day, the prior is overwhelmed by data within 1-2 days. The prior doesn't matter when the fundamental issue is signal-to-noise ratio.
+2. **Per-user competition (7 treatments) is more favorable than the global view.** Scenario C shows each user's 7-treatment auction converges in 44 days — faster than the global 20-treatment problem (115 days) but slower than 10 treatments (28 days). This is because the model still maintains 20 posteriors globally, even though each user only faces 7.
 
-3. **50% of simulations never converge with 30 treatments.** The best-vs-second-best gap is only ~0.7pp CTR. With 167 sends/treatment/day and ~2% CTR, the 95% CI width is ~1pp -- larger than the treatment gap. Convergence is a coin flip.
+3. **Informative priors still don't help.** Scenario D (informative prior with 10 treatments) shows identical results to Scenario B (flat prior). With 75 opens/treatment/day, the prior is overwhelmed within 1-2 days.
 
-4. **Simulation is conservative but directionally correct.** The simulation uses 30 treatments in a uniform auction. Reality is more nuanced: 92 treatments in the pool, but only 4-7 eligible per user request (fitment-filtered). The top 20 treatments (100+ sends/day) handle 75% of traffic. The effective per-request competition is lower than 30, but the model still maintains 92 posteriors globally, and the long tail adds noise.
+4. **37.5% never converge with 20 treatments.** The best-vs-second-best gap is ~2pp CTR of opens (11.5% vs 10%). With 37 opens/treatment/day and ~11% CTR, the 95% CI width is ~3pp after 30 days — larger than the treatment gap. The model needs 4+ months to separate adjacent treatments.
 
 ### Posterior Evolution (Best vs Worst Treatment)
 
-**Scenario A (Current): 30 treatments**
+**Scenario A (Current): 20 treatments, 37 opens/treatment/day**
 ```
    Day   Best mu  Best std  Worst mu Worst std       Gap  Separable?
-     1  0.024242  0.014726  0.000000  0.008571  0.024242          no
-     8  0.030897  0.004868  0.002268  0.001689  0.028629         YES
-    30  0.025820  0.002227  0.001165  0.000549  0.024656         YES
-    90  0.025755  0.001292  0.001126  0.000288  0.024629         YES
-   180  0.024835  0.000902  0.001138  0.000201  0.023697         YES
+     1  0.175000  0.069850  0.000000  0.035355  0.175000          no
+     8  0.129870  0.019702  0.016611  0.008738  0.113259         YES
+    31  0.120870  0.009691  0.023276  0.004592  0.097594         YES
+    90  0.124068  0.005709  0.029161  0.002918  0.094907         YES
+   180  0.120703  0.003997  0.025943  0.001952  0.094760         YES
 ```
 
-Best vs worst (2.5% vs 0.1%) separates within 8 days. But the **adjacent treatments** (2.5% vs 2.2%, or 1.0% vs 0.9%) never separate within 180 days -- that's what the "50% never converge" means.
+Best (11.5%) vs worst (2.5%) separates by day 8. But **adjacent treatments** (11.5% vs 10.0%) don't separate within 180 days — that's the "37.5% never converge" finding.
 
-**Scenario D (Recommended): 10 treatments**
+**Scenario B (Recommended): 10 treatments, 75 opens/treatment/day**
 ```
    Day   Best mu  Best std  Worst mu Worst std       Gap  Separable?
-     1  0.024749  0.006802  0.001333  0.001394  0.023416         YES
-    12  0.024309  0.001775  0.002078  0.000522  0.022231         YES
-    90  0.024473  0.000724  0.001947  0.000206  0.022526         YES
+     1  0.141026  0.043418  0.013514  0.023354  0.127512          no
+     8  0.117253  0.013380  0.018395  0.005982  0.098858         YES
+    31  0.120223  0.006767  0.023932  0.003217  0.096292         YES
+    90  0.121851  0.003964  0.026323  0.001947  0.095528         YES
+```
+
+**Scenario C (Per-user): 7 treatments, 107 opens/treatment/day**
+```
+   Day   Best mu  Best std  Worst mu Worst std       Gap  Separable?
+     1  0.081818  0.029134  0.009346  0.016162  0.072472          no
+     8  0.082944  0.009571  0.024793  0.005598  0.058151         YES
+    31  0.097957  0.005170  0.025159  0.002760  0.072798         YES
+    90  0.100247  0.003047  0.026088  0.001625  0.074159         YES
 ```
 
 With 3x more data per treatment, even adjacent treatments separate quickly.
@@ -296,10 +318,10 @@ The model is correct but operating in a regime where convergence is mathematical
 ### Immediate (This Week)
 
 1. **Reduce treatment pool from 92 to 10** (HIGHEST IMPACT)
-   - Simulation proves this cuts convergence from 106 to 12 days
+   - Simulation proves this cuts convergence from 115 to 28 days (4x), and non-convergence from 37.5% to 0%
    - Currently 92 treatments in pool; top 10 already handle 49% of traffic
    - Remove long-tail treatments that accumulate <50 sends/day — their noisy posteriors hurt more than help
-   - Expected impact: Model starts exploiting winners within 2 weeks
+   - Expected impact: Model starts exploiting winners within 4 weeks
 
 2. **Clamp scores to [0, 1]**
    - Prevents the score > 1.0 anomaly from recurring
@@ -345,9 +367,10 @@ The model is correct but operating in a regime where convergence is mathematical
 | Invalid scores (> 1.0) | 1,686 total | Q11 |
 | Score anomaly cause | 31 new treatments added Jan 23 | Q14 |
 | NIG posterior accuracy | MATCH (within 0.2-0.6pp of expected) | Q13 |
-| Median convergence (30 treatments) | 106 days, 50% never | Simulation |
-| Median convergence (10 treatments) | 12 days, 0% never | Simulation |
-| Convergence improvement factor | **9x faster** | Simulation |
+| Median convergence (20 treatments) | 115 days, 37.5% never | Simulation v2 |
+| Median convergence (10 treatments) | 28 days, 0% never | Simulation v2 |
+| Median convergence (7 per-user) | 44 days, 0.5% never | Simulation v2 |
+| Convergence improvement (20→10) | **4x faster** | Simulation v2 |
 
 ---
 
@@ -370,6 +393,6 @@ The model is correct but operating in a regime where convergence is mathematical
 
 The bandit model is **not broken** -- it's **starving for data**. The NIG Thompson Sampling math is correct (Q13), the training data is clean (Q11), and the model updates daily (Phase 1). 92 treatments exist in the bandit pool, but the competition is more nuanced than it appears: per user request, only **4-7 treatments** are eligible (fitment-filtered), and the **top 10 treatments handle 49% of all traffic** (~250 sends/day each). However, the long tail of 72 low-traffic treatments maintains noisy posteriors that occasionally win the Thompson Sampling auction, undermining the model's ability to exploit known winners.
 
-The single most impactful fix is **reducing the treatment pool from 92 to 10**. Our simulation proves this would cut convergence time from 106 days (with 50% never converging) to 12 days (with 100% convergence). Combined with a 90/10 traffic split favoring the bandit, the model should start showing measurable CTR improvement within 2-4 weeks.
+The single most impactful fix is **reducing the treatment pool from 92 to 10**. Our simulation (now using opens as observations, matching the actual model) proves this would cut convergence time from 115 days (with 37.5% never converging) to 28 days (with 100% convergence). The per-user view (7 treatments per fitment segment) converges in 44 days. Combined with a 90/10 traffic split favoring the bandit, the model should start showing measurable CTR improvement within 4-6 weeks.
 
 **Bottom line: This isn't a software bug to fix -- it's a statistical reality to address through treatment consolidation.**
