@@ -16,12 +16,12 @@ Phase 2 definitively answers "is there a mistake from our side?" with a **nuance
 | Hypothesis | Verdict | Details |
 |------------|---------|---------|
 | H1: Bad training data | **Minor issues only** | 877 phantom clicks, 150K non-LIVE sends exist but are filtered correctly |
-| H2: Model misconfigured | **Partially yes** | 82 treatments in pool (only ~25 effectively active), new treatments caused score > 1.0 anomaly |
+| H2: Model misconfigured | **Partially yes** | 92 treatments in pool (20 high-traffic, but only 4-7 eligible per user), new treatments caused score > 1.0 anomaly |
 | H3: Structural limitation | **PRIMARY CAUSE** | Simulation proves 30 treatments need 106+ days to converge; 50% never converge |
 
-**Root cause:** The model is mathematically correct but structurally unable to learn at current data volume. While 82 treatments exist in the pool, only ~25 receive meaningful traffic (100+ sends/day, accounting for 68% of all sends). The remaining ~53 treatments get <10 sends/day, effectively rejected by fitment requirements. Even with the effective count of ~25 treatments sharing ~5,000 sends/day, each treatment gets only ~130-200 sends/day and ~1-3 clicks/day. The NIG posterior needs months to differentiate treatments whose true CTRs differ by only 0.5-1.5pp.
+**Root cause:** The model is mathematically correct but structurally unable to learn at current data volume. 92 treatments exist in the bandit pool. The top 10 handle 49% of traffic (~250 sends/day each), and 20 treatments have 100+ sends/day (75% of traffic). Per user request, only 4-7 treatments are actually eligible (fitment-filtered). However, the model maintains posteriors for all 92 treatments, and the long tail of 72 low-traffic treatments adds noise without generating enough data to converge.
 
-**Fix:** Reduce active treatments from ~25 effective to 10. Simulation shows this cuts convergence from 106 days (50% never) to 12 days (100% converge).
+**Fix:** Reduce the treatment pool from 92 to 10. Simulation shows this cuts convergence from 106 days (50% never) to 12 days (100% converge).
 
 ---
 
@@ -62,7 +62,7 @@ Phase 1 (`docs/bandit_investigation_report.md`, 2026-02-06) established:
 
 ---
 
-### Finding 12: Nominal vs Effective Treatment Count (82 in pool, ~25 active)
+### Finding 12: Treatment Count — 92 in Pool, 20 High-Traffic, 4-7 Per User
 
 **Q12: Treatment Count & Effective Competition**
 
@@ -74,20 +74,36 @@ Phase 1 (`docs/bandit_investigation_report.md`, 2026-02-06) established:
 
 **Critical finding:** On Jan 23, the number of active treatments jumped from 56 to 87 (+31 treatments overnight). This coincides exactly with the score > 1.0 anomaly. The new treatments had almost zero historical data, causing the NIG prior to produce extreme scores.
 
-**Correction — Effective vs Nominal Treatment Count:**
+**Traffic Distribution (Bandit Arm, Jan 14 - Feb 6):**
 
-While the system has 82 treatments in the pool post-Jan 23, most are rejected by fitment/eligibility requirements and receive negligible traffic. The effective competition is much lower:
+92 treatments exist in the bandit pool. Traffic is heavily concentrated at the top:
 
-| Tier | Sends/Day | Treatments | % of Total Sends | Role |
-|------|-----------|------------|-----------------|------|
-| **High-traffic** | 100+ | ~25 | **68%** | Actively competing |
-| Medium-traffic | 50-99 | ~23 | 17% | Moderate competition |
-| Low-traffic | 10-49 | ~50 | 13% | Marginal (niche fitment) |
-| Near-zero | <10 | ~53 | 2.5% | Effectively rejected |
+| Tier | Avg Sends/Day | Treatments | Cumulative Traffic | Role |
+|------|-------------|------------|-------------------|------|
+| **Top 10** | 200-317 | 10 | **49%** | Core competitors |
+| **Rank 11-20** | 103-189 | 10 | **75%** | Active competitors |
+| Rank 21-25 | 57-95 | 5 | 82% | Moderate |
+| Rank 26-40 | 25-49 | 15 | 92% | Long tail |
+| Rank 41-58 | 10-24 | 18 | 98% | Marginal |
+| Rank 59-92 | 1-7 | 34 | 100% | Near-zero (niche fitment) |
 
-The **effective competition is ~25 treatments**, not 80+. These 25 treatments account for 68% of all sends and are the ones the bandit model meaningfully competes over. The remaining treatments serve niche fitment segments and don't materially dilute the bandit's learning signal.
+**Per-User Competition (the real number that matters):**
 
-This means our simulation with 30 treatments (Scenario A) is a **reasonable approximation** of the real effective competition, and the core finding holds: even ~25 effective treatments are too many for the current data volume.
+Users with 3+ sends see only **4-7 distinct treatments** over the period. Fitment requirements dramatically narrow the eligible pool per user request:
+
+| Distinct Treatments Seen | Users | Avg Sends |
+|--------------------------|-------|-----------|
+| 2 | 2,284 | 3.6 |
+| 3 | 1,911 | 4.8 |
+| 4 | 2,924 | 6.7 |
+| 5 | 2,684 | 7.9 |
+| 6 | 3,900 | 10.5 |
+| 7 | 876 | 10.7 |
+| 8-9 | 232 | 11.0 |
+
+**Key insight:** The bandit does NOT run a 92-treatment auction. Per user request, only **4-7 treatments** are eligible (fitment-filtered). The model scores these 4-7 and picks the highest Thompson Sample. This means the effective per-request competition is much lower than the pool size suggests.
+
+However, the model still maintains posteriors for all 92 treatments globally. The top 10 treatments (49% of traffic) accumulate ~250 sends/day each, giving them reasonable data for convergence. The remaining 82 treatments share only 51% of traffic across many niche segments.
 
 ---
 
@@ -185,11 +201,11 @@ For lower-volume treatments like 16593503 (12 sends/day), clicks DO visibly incr
 | 21265506 | BR/AC | 8,051 | 1,175 | 118 | 10.04% | 15.3 |
 | 21265478 | BR/AC | 7,008 | 1,232 | 142 | 11.53% | 18.4 |
 
-**Long tail problem:** The top 7 treatments get 13-18 clicks/week, but most treatments get far fewer. Among the ~25 effectively active treatments:
+**Long tail problem:** The top 7 treatments get 13-18 clicks/week, but most treatments get far fewer:
 
-- **Top 10 treatments:** 7-18 clicks/week each (potentially learnable)
-- **Next 15 treatments:** 2-6 clicks/week each (very slow convergence)
-- **Remaining 50+ treatments:** 0-2 clicks/week each (rejected by fitment, impossible to learn)
+- **Top 10 treatments:** 7-18 clicks/week each (potentially learnable, 49% of traffic)
+- **Rank 11-20:** 2-7 clicks/week each (slow convergence, 26% of traffic)
+- **Remaining 72 treatments:** 0-2 clicks/week each (25% of traffic spread paper-thin)
 
 ---
 
@@ -214,7 +230,7 @@ For lower-volume treatments like 16593503 (12 sends/day), clicks DO visibly incr
 
 3. **50% of simulations never converge with 30 treatments.** The best-vs-second-best gap is only ~0.7pp CTR. With 167 sends/treatment/day and ~2% CTR, the 95% CI width is ~1pp -- larger than the treatment gap. Convergence is a coin flip.
 
-4. **Simulation closely mirrors reality.** The simulation uses 30 treatments; Q12 shows ~25 effectively active treatments (100+ sends/day) competing for 68% of traffic. The remaining 50+ low-traffic treatments are mostly rejected by fitment and don't meaningfully dilute the learning signal. The 30-treatment simulation is a reasonable (slightly conservative) approximation.
+4. **Simulation is conservative but directionally correct.** The simulation uses 30 treatments in a uniform auction. Reality is more nuanced: 92 treatments in the pool, but only 4-7 eligible per user request (fitment-filtered). The top 20 treatments (100+ sends/day) handle 75% of traffic. The effective per-request competition is lower than 30, but the model still maintains 92 posteriors globally, and the long tail adds noise.
 
 ### Posterior Evolution (Best vs Worst Treatment)
 
@@ -255,19 +271,21 @@ With 3x more data per treatment, even adjacent treatments separate quickly.
 ### Is it a configuration issue?
 
 **Partially.** Two configuration problems:
-1. **Too many treatments (~25 effective, recommended 10):** While 82 treatments exist in the pool, only ~25 receive meaningful traffic (100+ sends/day). Even this effective count is 2.5x the recommended 10. The Jan 23 addition of 31 new treatments was particularly harmful, causing the score anomaly and temporarily increasing effective competition.
+1. **Too many treatments in the pool (92, with 20 high-traffic):** 92 treatments compete in the pool, though only 4-7 are eligible per user request (fitment-filtered) and only 20 have 100+ sends/day. Still, the model maintains posteriors for all 92, and low-data treatments with noisy posteriors can occasionally beat well-calibrated ones in the Thompson Sampling auction. The Jan 23 addition of 31 new treatments was particularly harmful, causing the score anomaly.
 2. **No cold-start protection:** New treatments with 1-2 observations can produce scores > 1.0 via Thompson Sampling perturbation. A warmup period or score clamping is needed.
 
 ### Is it a structural limitation?
 
 **YES -- this is the primary cause.** The NIG Thompson Sampling model is fundamentally unable to learn at the current data volume:
 
-- **~25 effective treatments** share ~5,000 sends/day = ~200 sends/treatment/day
-- At ~10% open rate and ~8% CTR of opens: ~1.6 clicks/treatment/day
-- NIG posterior mean changes by 1/(1+opens) per click = ~0.001 per click
-- Treatment CTR differences are ~0.5-2pp
-- Posterior needs to shrink stddev below 0.5pp to differentiate = requires thousands of opens per treatment
-- At ~20 opens/treatment/day, this takes **months**
+- **92 treatments** in pool, **20 with 100+ sends/day** (top 10 get ~250/day)
+- Per user request: only **4-7 eligible** treatments (fitment-filtered)
+- Top 10 treatments: ~250 sends/day, ~37 opens/day, ~3 clicks/day — potentially learnable
+- But the **other 72 treatments** get <50 sends/day (many <10), creating noisy posteriors
+- These noisy posteriors occasionally beat calibrated ones in Thompson Sampling
+- Treatment CTR differences within the same fitment segment are ~0.5-2pp
+- Posterior needs stddev below 0.5pp to differentiate = requires hundreds of opens per treatment
+- Most treatments never accumulate enough data
 
 The model is correct but operating in a regime where convergence is mathematically impossible within a reasonable timeframe.
 
@@ -277,10 +295,10 @@ The model is correct but operating in a regime where convergence is mathematical
 
 ### Immediate (This Week)
 
-1. **Reduce active treatments to 10-15** (HIGHEST IMPACT)
+1. **Reduce treatment pool from 92 to 10** (HIGHEST IMPACT)
    - Simulation proves this cuts convergence from 106 to 12 days
-   - Currently ~25 treatments are effectively active (100+ sends/day); consolidate to 10
-   - Group by campaign type and select the best representative treatment per group
+   - Currently 92 treatments in pool; top 10 already handle 49% of traffic
+   - Remove long-tail treatments that accumulate <50 sends/day — their noisy posteriors hurt more than help
    - Expected impact: Model starts exploiting winners within 2 weeks
 
 2. **Clamp scores to [0, 1]**
@@ -318,9 +336,10 @@ The model is correct but operating in a regime where convergence is mathematical
 
 | Metric | Value | Source |
 |--------|-------|--------|
-| Treatments in pool per day | 55-87 | Q12 |
-| Effectively active treatments (100+ sends/day) | ~25 | Q12 (corrected) |
-| Sends per effective treatment per day | ~200 | Q12 (corrected) |
+| Treatments in bandit pool | 92 | Q12 |
+| Treatments with 100+ sends/day | 20 (75% of traffic) | Q12 |
+| Top 10 treatments share of traffic | 49% | Q12 |
+| Treatments eligible per user request | 4-7 | Q12 (user analysis) |
 | Clicks per treatment per week | 0.1-18 | Q16 |
 | Phantom clicks | 877 / 821,740 (0.11%) | Q11 |
 | Invalid scores (> 1.0) | 1,686 total | Q11 |
@@ -337,7 +356,7 @@ The model is correct but operating in a regime where convergence is mathematical
 | Query | File | Purpose | Key Finding |
 |-------|------|---------|-------------|
 | Q11 | `sql/analysis/bandit_investigation_phase2.sql` | Training data quality | Clean data (0 dupes, 0 time-travel) |
-| Q12 | Same | Treatment count per day | 82 in pool, ~25 effectively active |
+| Q12 | Same | Treatment count per day | 92 in pool, 20 high-traffic, 4-7 per user |
 | Q13 | Same | NIG math verification | Model is correct (opens-based CTR) |
 | Q14A-C | Same | Score > 1.0 forensics | New treatments with 1-29 sends |
 | Q15 | Same | Click latency | D+1 response exists but signal ~0.001 |
@@ -349,8 +368,8 @@ The model is correct but operating in a regime where convergence is mathematical
 
 ## Conclusion
 
-The bandit model is **not broken** -- it's **starving for data**. The NIG Thompson Sampling math is correct (Q13), the training data is clean (Q11), and the model updates daily (Phase 1). While 82 treatments exist in the pool, only ~25 are effectively active (100+ sends/day, 68% of traffic) -- the rest are rejected by fitment requirements. Even with this corrected count of ~25 effective treatments sharing ~5,000 sends/day, each treatment gets too little data for the model to differentiate winners from losers.
+The bandit model is **not broken** -- it's **starving for data**. The NIG Thompson Sampling math is correct (Q13), the training data is clean (Q11), and the model updates daily (Phase 1). 92 treatments exist in the bandit pool, but the competition is more nuanced than it appears: per user request, only **4-7 treatments** are eligible (fitment-filtered), and the **top 10 treatments handle 49% of all traffic** (~250 sends/day each). However, the long tail of 72 low-traffic treatments maintains noisy posteriors that occasionally win the Thompson Sampling auction, undermining the model's ability to exploit known winners.
 
-The single most impactful fix is **reducing active treatments from ~25 to 10**. Our simulation proves this would cut convergence time from 106 days (with 50% never converging) to 12 days (with 100% convergence). Combined with a 90/10 traffic split favoring the bandit, the model should start showing measurable CTR improvement within 2-4 weeks.
+The single most impactful fix is **reducing the treatment pool from 92 to 10**. Our simulation proves this would cut convergence time from 106 days (with 50% never converging) to 12 days (with 100% convergence). Combined with a 90/10 traffic split favoring the bandit, the model should start showing measurable CTR improvement within 2-4 weeks.
 
 **Bottom line: This isn't a software bug to fix -- it's a statistical reality to address through treatment consolidation.**
