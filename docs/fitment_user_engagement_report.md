@@ -103,6 +103,14 @@ Personalized never loses. It wins on clicks in 2 of 3 campaigns and ties in the 
 
 ## 2. The Personalization Mechanism: Opens Drive the Lift
 
+> **Clarification: "% Users Clicked" vs "CTR of Opens"**
+>
+> These are two different metrics with different denominators:
+> - **Pct users clicked** (Section 1): "What % of all users clicked at least once?" — denominator is all users who received the email. Personalized wins by +16% to +66%.
+> - **CTR of opens** (below): "Of users who opened, what % clicked?" — denominator is only users who opened. This is roughly equal (~8%) for both treatments.
+>
+> Both can be true simultaneously: Personalization gets more users to open (+33-42%), and a similar fraction of openers click (~8%), so more total users end up clicking. **The uplift comes from opens, not from in-email engagement.**
+
 A consistent pattern across all three campaigns reveals HOW personalization creates uplift:
 
 | Campaign | Open Rate Lift (within-user) | Click-Through-of-Opens |
@@ -111,11 +119,11 @@ A consistent pattern across all three campaigns reveals HOW personalization crea
 | Abandon Cart | **+42%** | Similar (~8%) |
 | Post Purchase | **+36%** | Similar |
 
-**The insight**: Personalization makes emails more relevant at the subject line / preview level, causing more users to open. Once opened, the click-through rate is essentially the same. This means:
+**The insight**: Personalized emails see significantly more opens (+33-42%), though subject lines are not personalized — the open lift may come from preview text rendering or user conditioning. However, once opened, the click-through rate is essentially the same (~8%), despite the email body containing personalized product recommendations. This means:
 
-1. The recommendation algorithm is successfully generating **more compelling email content**
-2. The product recommendations inside the email perform equally well regardless of personalization
-3. The opportunity is to improve **in-email content** to convert more of those additional opens into clicks
+1. Personalization is driving more opens through a mechanism that needs further investigation (preview text, deliverability, or user behavior)
+2. The personalized product recommendations in the email body are **not yet converting** at a higher rate than static content
+3. The opportunity is to improve how personalized recommendations are presented (layout, images, CTAs) to convert more openers into clickers
 
 ---
 
@@ -194,7 +202,7 @@ Personalized generated **$101K total revenue** from a larger user base (1,797 us
 
 ### Opportunity Areas
 
-1. **Convert opens to clicks** - Personalization gets users to open (+33-42%), but in-email CTR is flat. Improving product recommendation presentation inside the email could multiply the uplift.
+1. **Improve in-email click-through** - Personalized recommendations in the email body aren't yet driving higher CTR-of-opens (~8% for both). Improving how recommendations are presented (layout, images, CTAs) could convert more of the extra openers into clickers.
 2. **Reduce send frequency** - Personalized sends 6-7 emails/user; CTR drops 70% after 7th send. Capping at 3 sends would improve efficiency.
 3. **Expand fitment to Browse Recovery** - Only 59.6% of Browse Recovery Personalized users have vehicle data. Adding fitment recommendations for the remaining 40% could further lift the already-strong 7.14% within-user click rate.
 
