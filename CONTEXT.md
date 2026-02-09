@@ -1,99 +1,122 @@
-# Session Context — 2026-02-05
+# Session Context — 2026-02-07
 
-## Current Status: Personalization Uplift Analysis Complete
+## Current Status: Bandit Model Investigation Complete (Phase 1 + Phase 2)
 
-### Key Result: Personalization is Working
+### Key Result: Model Is Correct But Starving for Data
 
-Personalized emails outperform Static/Control across **all three Holley email campaigns**:
+The Holley bandit model (195001001, NIG Thompson Sampling) is **mathematically correct** but **cannot learn** due to structural data sparsity. Not a software bug.
 
-| Campaign | Personalized Click Rate | Control Click Rate | Relative Lift |
-|----------|------------------------:|-------------------:|--------------:|
-| **Browse Recovery** | 8.31% | 5.05% | **+65%** |
-| **Abandon Cart** | 5.04% | 2.95% | **+71%** |
-| **Post Purchase** | 4.13% | 1.11% | **+272%** |
+### Treatment Count (Corrected)
 
-- **208,800 personalized sends** to 29,546 users
-- **~1,790 incremental clicks** generated from personalization
-- **Open rates 42-152% higher** for personalized emails
-- **v5.17 algorithm improved open rates by +61%** for the same users
+| Metric | Value |
+|--------|-------|
+| Treatments in bandit pool | **92** |
+| Treatments with 100+ sends/day | **20** (75% of traffic) |
+| Top 10 treatments share | **49%** of traffic |
+| Per-user eligible (fitment-filtered) | **4-7** |
+| Bottom 34 treatments | 1-7 sends/day (niche fitment) |
 
-### What Was Done Today
+### Convergence Simulation (v2 — Opens-Based)
 
-1. **CTR formula fix** — Corrected `SUM(clicked)/SUM(opened)` to exclude image-blocking phantom clicks (19 removed). Applied to all SQL files.
-2. **6 diagnostic queries** — Investigated send frequency confound, email fatigue, bandit bias, first-send comparison, data integrity. Found per-user click rates are nearly equal (3.57% vs 3.78% in v5.7).
-3. **Cross-campaign discovery** — Browse Recovery and Abandon Cart already have personalized/fitment treatments. Personalized wins in all 3 campaigns.
-4. **Reports restructured** — All 3 reports rewritten to highlight personalization uplift for customer presentation.
+Model trains on opens (~750/day), not sends (~5000/day). CTR of opens: 5-12%.
 
-### Reports (Customer-Ready)
+| Scenario | Median Days | Never Converge |
+|----------|------------|----------------|
+| A: Current (20 trts, 37 opens/trt/day) | **115** | **37.5%** |
+| B: 10 treatments (75 opens/trt/day) | **28** | **0%** |
+| C: Per-user (7 trts, 107 opens/trt/day) | **44** | **0.5%** |
+| D: 10 trts + informative prior | **28** | **0%** |
 
-| Report | Focus | File |
-|--------|-------|------|
-| **Personalization Uplift Report** | Cross-campaign results, uplift by campaign, algorithm improvement | `docs/fitment_user_engagement_report.md` |
-| **P vs S Performance V2** | Post Purchase detailed analysis, per-user parity, opportunity areas | `docs/personalized_vs_static_uplift_report_v2.md` |
-| **P vs S Performance V1** | Post Purchase with crash exclusion, condensed | `docs/personalized_vs_static_uplift_report_2026_02_05.md` |
+**Reducing 20 → 10 treatments = 4x faster convergence, 37.5% → 0% non-convergence.**
 
-### Files Changed Today
+### Other Key Findings
 
-| File | Change |
-|------|--------|
-| `sql/analysis/uplift_analysis_queries_v2.sql` | CTR formula fix + 6 diagnostic queries added |
-| `sql/analysis/uplift_analysis_queries.sql` | CTR formula fix |
-| `sql/analysis/uplift_base_table.sql` | CTR formula fix in validation query |
-| `docs/fitment_user_engagement_report.md` | NEW — Personalization Uplift Report (cross-campaign) |
-| `docs/personalized_vs_static_uplift_report_v2.md` | Restructured for customer presentation |
-| `docs/personalized_vs_static_uplift_report_2026_02_05.md` | Restructured for customer presentation |
+- NIG posteriors are correct (Q13: scores match `clicks/(1+opens)` within 0.2-0.6pp)
+- Training data is clean (0 dupes, 0 time-travel, 0.11% phantom clicks)
+- Score > 1.0 anomaly: caused by 31 new treatments added Jan 23 with 1-29 sends
+- 1,686 invalid scores total; self-corrected by Feb 1
+- Informative priors don't help (overwhelmed by data in 1-2 days)
+
+---
+
+## Files Created/Modified in This Investigation
+
+### Phase 1 (2026-02-06)
+| File | Purpose |
+|------|---------|
+| `sql/analysis/bandit_investigation.sql` | 10 diagnostic queries (Q1-Q10) |
+| `docs/bandit_investigation_report.md` | Phase 1 findings — model updates but doesn't learn |
+
+### Phase 2 (2026-02-07)
+| File | Purpose |
+|------|---------|
+| `sql/analysis/bandit_investigation_phase2.sql` | 6 queries (Q11-Q16): data quality, treatment count, NIG math, score forensics |
+| `src/nig_convergence_simulation.py` | NIG TS convergence simulation (v2, opens-based, 4 scenarios) |
+| `docs/bandit_investigation_report_v2.md` | Full root cause report with corrected treatment counts + simulation |
+
+### Linear Issue
+- **AUX-12221**: "Bandit model cannot learn: reduce treatment pool from 92 to 10"
+- Status: Todo, assigned to Praveen
+- Contains full findings + recommendations
 
 ---
 
 ## Branch State
 - Branch: `main`
 - Up to date with `origin/main`
-- Working tree: **clean**
-- Last commit: `e5bd97f` — Restructure uplift reports to highlight personalization success
+- Working tree: clean (except `docs/fitment_user_engagement_report.docx` untracked)
+- Last commit: `20ffc87` — Update simulation with corrected inputs
+
+---
+
+## Prior Work (2026-02-05)
+
+### Personalization Uplift Analysis
+
+Personalized emails outperform Static/Control across all 3 campaigns:
+
+| Campaign | Personalized CTR | Control CTR | Lift |
+|----------|----------------:|------------:|-----:|
+| Browse Recovery | 8.31% | 5.05% | +65% |
+| Abandon Cart | 5.04% | 2.95% | +71% |
+| Post Purchase | 4.13% | 1.11% | +272% |
+
+Reports: `docs/fitment_user_engagement_report.md`, `docs/personalized_vs_static_uplift_report_v2.md`
+
+---
+
+## Recommendations (Priority Order)
+
+### Immediate
+1. **Reduce treatment pool from 92 to 10** — 4x faster convergence, top 10 already handle 49%
+2. **Clamp scores to [0, 1]** — prevent score > 1.0 anomaly
+
+### Short-Term
+3. **Cold-start warmup** — require >= 100 sends before entering bandit
+4. **Revert to 10/90 split** (10% Random, 90% Bandit)
+
+### Medium-Term
+5. **Hierarchical/group-level learning** — share signal across similar treatments
+6. **Contextual bandits** — current model ignores user features
 
 ---
 
 ## Key References
 
-### Reports & Analysis
-- **Primary report**: `docs/fitment_user_engagement_report.md` (cross-campaign uplift)
-- V2 report: `docs/personalized_vs_static_uplift_report_v2.md` (Post Purchase detail)
-- V1 report: `docs/personalized_vs_static_uplift_report_2026_02_05.md` (crash excluded)
-- V2 queries: `sql/analysis/uplift_analysis_queries_v2.sql`
-- V1 queries: `sql/analysis/uplift_analysis_queries.sql`
-- Base table: `sql/analysis/uplift_base_table.sql`
+### Bandit Investigation
+- Phase 1 report: `docs/bandit_investigation_report.md`
+- Phase 2 report: `docs/bandit_investigation_report_v2.md`
+- NIG math reference: `docs/bandit-models-deep-analysis.md`
+- Phase 1 SQL: `sql/analysis/bandit_investigation.sql`
+- Phase 2 SQL: `sql/analysis/bandit_investigation_phase2.sql`
+- Simulation: `src/nig_convergence_simulation.py`
+
+### Uplift Analysis
+- Cross-campaign report: `docs/fitment_user_engagement_report.md`
+- P vs S detail: `docs/personalized_vs_static_uplift_report_v2.md`
+- Queries: `sql/analysis/uplift_analysis_queries_v2.sql`
 
 ### Pipeline
 - Pipeline v5.17: `sql/recommendations/v5_17_*.sql`
-- Pipeline v5.18: `sql/recommendations/v5_18_revenue_ab_test.sql`
 - QA checks: `sql/validation/qa_checks.sql`
-
-### Experiment Setup
-- Experiment doc: `docs/holley_experiment_setup.md`
-- Treatment configs: `configs/personalized_treatments.csv`, `configs/static_treatments.csv`
-
----
-
-## Key Learnings
-
-### Per-Send CTR is Misleading
-Personalized sends 6.3 emails/user vs Static 1.9 (3.3x). The 2.7x per-send CTR gap shrinks to 1.06x when measured per-user. Always use **per-user binary click rate** as the primary metric.
-
-### Personalization Mechanism
-The lift comes from **opens, not click-through**. Personalized users open at dramatically higher rates (+42-152%), but CTR-of-opens is similar (~8% for BR/AC). The algorithm generates more relevant email subjects/previews.
-
-### Campaign Structure
-All 3 campaigns already have personalized treatments:
-- **Browse Recovery**: 25 personalized + 10 control (largest campaign, 567K sends)
-- **Abandon Cart**: 28 fitment + 18 static
-- **Post Purchase**: 10 fitment + 22 static (smallest campaign)
-
----
-
-## Next Steps
-
-1. **Present results to customer** — Reports are customer-ready, lead with uplift story
-2. **Cap send frequency at 3** — CTR drops 70% after 7th send
-3. **Improve in-email content** — More opens but CTR-of-opens is flat; product presentation opportunity
-4. **Expand fitment to Browse Recovery** — Only 59.6% of BR users have vehicle data
-5. **Deploy v5.18** with proper A/B test design for revenue measurement
+- Schema: `docs/bigquery_schema.md`
