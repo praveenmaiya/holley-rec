@@ -235,7 +235,7 @@ _Among users who received both P and S, which did they click?_
 | Post Purchase | Static | Bandit | Yes | 133 | 237 |
 | Post Purchase | Static | Bandit | No | 4,387 | 8,241 |
 
-**Total sends in analysis**: ~983K
+**Total sends in analysis**: ~851K
 
 ---
 
@@ -253,7 +253,7 @@ Consistent across all campaigns, both arms. The personalized email is more likel
 Bandit arm shows higher open rates and % users clicked than Random in BR and AC. This means the model is selecting better user-treatment pairs.
 
 ### 4. Fitment Users Are Higher-Intent
-Even on identical Static emails, fitment users open 65-106% more and click at higher rates (except BR). Vehicle data is a proxy for engagement.
+Even on identical Static emails, fitment users open 65-106% more in AC and PP (BR is near-identical at +5%). Fitment users click at higher rates in AC and PP, but non-fitment win in BR. Vehicle data is a proxy for engagement.
 
 ### 5. Fatigue Varies by Campaign
 - Browse Recovery: **No fatigue** (7th+ send = same CTR as 1st)
@@ -261,7 +261,7 @@ Even on identical Static emails, fitment users open 65-106% more and click at hi
 - Post Purchase: **Severe fatigue** (-84% by 7th+)
 
 ### 6. Send Frequency Imbalance
-Personalized sends 2-5x more per user than Static. This dilutes per-send metrics and drives fatigue in AC and PP. Capping PP sends at 3 would reduce waste.
+Personalized sends 1.4-3.4x more per user than Static (AC 1.4x, BR 2.9x, PP 3.4x). This dilutes per-send metrics and drives fatigue in AC and PP. Capping PP sends at 3 would reduce waste.
 
 ---
 
