@@ -2,7 +2,7 @@
 
 **Date**: February 9, 2026
 **Period**: December 4, 2025 – February 9, 2026 (interactions captured through Feb 16)
-**Purpose**: Data Science weekly — complete experimental breakdown across all dimensions
+**Purpose**: Complete experimental breakdown across all dimensions
 
 ---
 
@@ -239,7 +239,7 @@ _Among users who received both P and S, which did they click?_
 
 ---
 
-## Key Findings for DS Meeting
+## Key Findings
 
 ### 1. Personalized Wins on Opens Everywhere (+25-34%)
 Consistent across all campaigns, both arms. The personalized email is more likely to be opened.
