@@ -9,18 +9,20 @@
 ## Experiment Structure
 
 ```
-All Holley Email Users (100% treated, 0% control)
+All Email Recipients (~104K of 3M total users)
 │
-├── Random Arm (4103): 50% — unbiased treatment assignment
+├── Random Arm (4103): ~80% of sends overall
 │   ├── Browse Recovery / Abandon Cart / Post Purchase
 │   │   ├── Fitment Users (have YMM) → Personalized OR Static
 │   │   └── Non-Fitment Users → Static only
 │
-└── Bandit Arm (4689): 50% — Thompson Sampling selection
-    └── (same structure, biased assignment)
+└── Bandit Arm (4689): ~20% of sends overall
+    └── (same structure, biased by Thompson Sampling)
 ```
 
-**Key constraint**: No holdout control (0% untreated). We can only compare Personalized vs Static, not email vs no-email.
+**Arm split note**: The experiment started 100% Random. Bandit was introduced Dec 14 at ~6-10%, ramped to ~28% by Jan 11, and reached 50/50 only on Jan 18. Overall period average is **80% Random / 20% Bandit**.
+
+**Key constraint**: No holdout control group. All email recipients get a treatment — we can compare Personalized vs Static, but not email vs no-email. Only ~3.4% of total users (104K of 3M) received email during this period.
 
 ### Full User Funnel
 
@@ -56,35 +58,35 @@ _Same users received BOTH Personalized and Static emails. Controls for all user-
 
 | Campaign | Type | Overlap Users | Sends | % Users Opened | % Users Clicked | Open Uplift | Click Uplift |
 |----------|------|-------------:|------:|--------------:|--------------:|------------:|-------------:|
-| **Browse Recovery** | Personalized | 14,384 | 80,263 | **36.08%** | **6.75%** | | |
-| | Static | 13,377 | 82,017 | 26.89% | 5.56% | **+34%** | **+21%** |
-| **Abandon Cart** | Personalized | 1,717 | 7,464 | **28.19%** | **4.60%** | | |
-| | Static | 3,264 | 8,768 | 21.29% | 3.62% | **+32%** | **+27%** |
-| **Post Purchase** | Personalized | 1,022 | 5,686 | **33.76%** | 4.21% | | |
-| | Static | 1,867 | 3,700 | 27.05% | **4.82%** | **+25%** | **-13% (S wins)** |
+| **Browse Recovery** | Personalized | 13,310 | 72,594 | **36.03%** | **6.66%** | | |
+| | Static | 13,310 | 81,836 | 26.89% | 5.57% | **+34%** | **+20%** |
+| **Abandon Cart** | Personalized | 1,314 | 6,305 | **31.20%** | **4.64%** | | |
+| | Static | 1,314 | 3,225 | 22.83% | 3.73% | **+37%** | **+24%** |
+| **Post Purchase** | Personalized | 656 | 3,726 | **30.95%** | 3.66% | | |
+| | Static | 656 | 1,250 | 22.87% | 3.66% | **+35%** | **0% (tied)** |
 
-**Takeaway**: Personalized wins on opens in all 3 campaigns (+25-34%). Wins on clicks in BR and AC, but **Static wins on clicks in Post Purchase** by 13%.
+**Takeaway**: Personalized wins on opens in all 3 campaigns (+34-37%). Wins on clicks in BR (+20%) and AC (+24%). Post Purchase is **dead even** on clicks (3.66% each).
 
 ### A4-A6: Both Arms (More Power, Slight Bandit Bias)
 
 | Campaign | Type | Overlap Users | Sends | % Users Opened | % Users Clicked | Open Uplift | Click Uplift |
 |----------|------|-------------:|------:|--------------:|--------------:|------------:|-------------:|
-| **Browse Recovery** | Personalized | 15,388 | 98,320 | **37.55%** | **7.43%** | | |
-| | Static | 14,290 | 98,489 | 28.19% | 6.26% | **+33%** | **+19%** |
-| **Abandon Cart** | Personalized | 2,141 | 10,384 | **31.20%** | **5.56%** | | |
-| | Static | 3,761 | 11,101 | 23.56% | 4.15% | **+32%** | **+34%** |
-| **Post Purchase** | Personalized | 1,118 | 6,273 | **34.08%** | 4.11% | | |
-| | Static | 1,944 | 3,859 | 27.16% | **4.84%** | **+25%** | **-15% (S wins)** |
+| **Browse Recovery** | Personalized | 14,217 | 88,123 | **37.42%** | **7.24%** | | |
+| | Static | 14,217 | 98,285 | 28.21% | 6.27% | **+33%** | **+15%** |
+| **Abandon Cart** | Personalized | 1,683 | 8,981 | **34.11%** | **5.76%** | | |
+| | Static | 1,683 | 4,149 | 24.42% | 3.86% | **+40%** | **+49%** |
+| **Post Purchase** | Personalized | 688 | 4,025 | **31.25%** | 3.63% | | |
+| | Static | 688 | 1,306 | 22.97% | 3.63% | **+36%** | **0% (tied)** |
 
-**Takeaway**: Similar to Random-only. Adding Bandit arm doesn't change the story materially. Post Purchase: Static still wins on clicks.
+**Takeaway**: Consistent with Random-only. Post Purchase is tied on clicks. AC shows the strongest uplift (+49% clicks, +40% opens) in the both-arms view.
 
 ### Summary: Within-User P vs S
 
 | Campaign | Open Winner | Click Winner | Open Lift (Random) | Click Lift (Random) |
 |----------|:----------:|:----------:|------------------:|-------------------:|
-| Browse Recovery | **Personalized** | **Personalized** | +34% | +21% |
-| Abandon Cart | **Personalized** | **Personalized** | +32% | +27% |
-| Post Purchase | **Personalized** | **Static** | +25% | -13% |
+| Browse Recovery | **Personalized** | **Personalized** | +34% | +20% |
+| Abandon Cart | **Personalized** | **Personalized** | +37% | +24% |
+| Post Purchase | **Personalized** | **Tied** | +35% | 0% |
 
 ---
 
@@ -159,15 +161,15 @@ _Among users who received both P and S, which did they click?_
 
 | Campaign | Clicked P Only | Clicked S Only | Clicked Both | Clicked Neither | Total | **P:S Ratio** |
 |----------|-------------:|-------------:|------------:|--------------:|------:|:------------:|
-| **Browse Recovery** | **809** | 582 | 162 | 12,898 | 14,451 | **1.39:1 (P wins)** |
-| **Abandon Cart** | 66 | **105** | 13 | 3,483 | 3,667 | **0.63:1 (S wins)** |
-| **Post Purchase** | 39 | **86** | 4 | 2,104 | 2,233 | **0.45:1 (S wins)** |
+| **Browse Recovery** | **725** | 579 | 162 | 11,844 | 13,310 | **1.25:1 (P wins)** |
+| **Abandon Cart** | **48** | 36 | 13 | 1,217 | 1,314 | **1.33:1 (P wins)** |
+| **Post Purchase** | 20 | 20 | 4 | 612 | 656 | **1:1 (tied)** |
 
 **Takeaway**:
-- Browse Recovery: 39% more users prefer Personalized (809 vs 582)
-- Abandon Cart: 59% more users prefer Static (105 vs 66)
-- Post Purchase: 120% more users prefer Static (86 vs 39)
-- **Only Browse Recovery shows clear user preference for Personalized**
+- Browse Recovery: 25% more users prefer Personalized (725 vs 579)
+- Abandon Cart: 33% more users prefer Personalized (48 vs 36)
+- Post Purchase: Dead even (20 vs 20)
+- **Personalized wins or ties on user preference in all 3 campaigns**
 
 ---
 
@@ -241,16 +243,16 @@ _Among users who received both P and S, which did they click?_
 
 ## Key Findings
 
-### 1. Personalized Wins on Opens Everywhere (+25-34%)
+### 1. Personalized Wins on Opens Everywhere (+34-37%)
 Consistent across all campaigns, both arms. The personalized email is more likely to be opened.
 
-### 2. Personalized Click Lift is Campaign-Dependent
-- **Browse Recovery: P wins** (+21% clicks, 39% more users prefer P)
-- **Abandon Cart: P wins on rate** (+27%) but **users prefer S** (105 vs 66)
-- **Post Purchase: S wins** (-13% clicks, 120% more users prefer S)
+### 2. Personalized Wins or Ties on Clicks in All Campaigns
+- **Browse Recovery: P wins** (+20% clicks, 25% more users prefer P)
+- **Abandon Cart: P wins** (+24% clicks, 33% more users prefer P)
+- **Post Purchase: Tied** (3.66% each, user preference 20 vs 20)
 
-### 3. The Bandit IS Learning
-Bandit arm shows higher open rates and % users clicked than Random in BR and AC. This means the model is selecting better user-treatment pairs.
+### 3. The Bandit IS Learning (Caveat: Unequal Exposure)
+Bandit arm shows higher open rates and % users clicked than Random in BR and AC. However, the arm split was ~80/20 overall (50/50 only from Jan 18), so Bandit results have less statistical power.
 
 ### 4. Fitment Users Are Higher-Intent
 Even on identical Static emails, fitment users open 65-106% more in AC and PP (BR is near-identical at +5%). Fitment users click at higher rates in AC and PP, but non-fitment win in BR. Vehicle data is a proxy for engagement.
@@ -269,9 +271,9 @@ Personalized sends 1.4-3.4x more per user than Static (AC 1.4x, BR 2.9x, PP 3.4x
 
 - **Analysis period**: December 4, 2025 – February 9, 2026
 - **Interaction window**: +7 days past send window (through Feb 16)
-- **Within-user**: Users who received BOTH P and S on the same arm
+- **Within-user**: Users who received BOTH P and S **in the same campaign** (per-campaign overlap, not cross-campaign)
 - **CTR formula**: `SUM(CASE WHEN opened=1 AND clicked=1 THEN 1 ELSE 0 END) / SUM(opened)` (excludes phantom clicks from image-blocking clients)
 - **% users clicked**: Binary per-user rate — "did this user click at least once?" (controls for send frequency)
 - **Treatment classification**: From PostgreSQL treatment.name (Browse Recovery / Abandon Cart / Post Purchase × Personalized / Static)
 - **Fitment-eligible**: Users with all 3 vehicle attributes (v1_year, v1_make, v1_model)
-- **Arms**: Random (4103) = unbiased assignment; Bandit (4689) = Thompson Sampling
+- **Arms**: Random (4103) = unbiased assignment; Bandit (4689) = Thompson Sampling. Overall split ~80/20 (50/50 only from Jan 18)
