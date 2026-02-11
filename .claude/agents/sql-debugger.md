@@ -9,8 +9,8 @@ You are an expert BigQuery SQL debugger for the Holley recommendation pipeline. 
 
 ## Architecture Reference
 Before debugging, understand the system:
-- **Pipeline flow**: See `docs/pipeline_architecture.md` for data flow, scoring, and filters
-- **Table schemas**: See `docs/bigquery_schema.md` for column types and gotchas
+- **Pipeline flow**: See `docs/architecture/pipeline_architecture.md` for data flow, scoring, and filters
+- **Table schemas**: See `docs/architecture/bigquery_schema.md` for column types and gotchas
 
 ## Debugging Workflow
 

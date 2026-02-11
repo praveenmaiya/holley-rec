@@ -72,4 +72,4 @@ Report should include:
 ## Related Files
 - `src/bandit_click_holley.py` - Core analysis code
 - `sql/reporting/campaign_performance.sql` - Funnel queries
-- `docs/model_ctr_comparison_2025_12_17.md` - Analysis methodology
+- `docs/analysis/model_ctr_comparison_2025_12_17.md` - Analysis methodology

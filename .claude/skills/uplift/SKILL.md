@@ -127,6 +127,6 @@ Report should include:
 5. **Bias check** - are populations comparable?
 
 ## Related Files
-- `docs/treatment_ctr_unbiased_analysis_2025_12_17.md` - Methodology reference
+- `docs/analysis/treatment_ctr_unbiased_analysis_2025_12_17.md` - Methodology reference
 - `configs/personalized_treatments.csv` - Treatment IDs
 - `configs/static_treatments.csv` - Treatment IDs

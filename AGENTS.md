@@ -21,8 +21,8 @@ Vehicle fitment recommendations for automotive parts using collaborative filteri
 
 | Doc | What it explains |
 |-----|------------------|
-| [Pipeline Architecture](docs/pipeline_architecture.md) | Data flow, scoring algorithm, filters, tuning knobs |
-| [BigQuery Schema](docs/bigquery_schema.md) | Table schemas, column types, query patterns, gotchas |
+| [Pipeline Architecture](docs/architecture/pipeline_architecture.md) | Data flow, scoring algorithm, filters, tuning knobs |
+| [BigQuery Schema](docs/architecture/bigquery_schema.md) | Table schemas, column types, query patterns, gotchas |
 | [Release Notes](docs/release_notes.md) | Version history and changes |
 
 ## Stack
@@ -52,8 +52,8 @@ Vehicle fitment recommendations for automotive parts using collaborative filteri
 ### Architecture (start here)
 | Path | Purpose |
 |------|---------|
-| `docs/pipeline_architecture.md` | **Data flow, scoring, filters, tuning knobs** |
-| `docs/bigquery_schema.md` | **Table schemas, gotchas, query patterns** |
+| `docs/architecture/pipeline_architecture.md` | **Data flow, scoring, filters, tuning knobs** |
+| `docs/architecture/bigquery_schema.md` | **Table schemas, gotchas, query patterns** |
 
 ### Pipeline
 | Path | Purpose |
@@ -72,8 +72,8 @@ Vehicle fitment recommendations for automotive parts using collaborative filteri
 ### Analysis & Reports
 | Path | Purpose |
 |------|---------|
-| `docs/campaign_reports_2025_12_10.md` | Post-purchase email campaign analysis |
-| `docs/treatment_ctr_unbiased_analysis_2025_12_17.md` | Unbiased CTR analysis (Personalized vs Static) |
+| `docs/analysis/campaign_reports_2025_12_10.md` | Post-purchase email campaign analysis |
+| `docs/analysis/treatment_ctr_unbiased_analysis_2025_12_17.md` | Unbiased CTR analysis (Personalized vs Static) |
 | `docs/release_notes.md` | Pipeline version history and changes |
 | `docs/pipeline_run_stats.md` | Pipeline run history & comparison stats |
 | `src/bandit_click_holley.py` | Email treatment Click Bandit analysis |
@@ -152,12 +152,12 @@ make test && make lint
 - Use `src/bandit_click_holley.py` for Thompson Sampling
 - Always use DISTINCT for click/view counts (prevents multi-click inflation)
 - 60-day window is standard for treatment analysis
-- Reference: `docs/model_ctr_comparison_2025_12_17.md`
+- Reference: `docs/analysis/model_ctr_comparison_2025_12_17.md`
 
 ### Uplift Analysis
 - Use MECE framework: only compare eligible users (with vehicle data)
 - Within-user comparison is gold standard (same user, both treatments)
-- Reference: `docs/treatment_ctr_unbiased_analysis_2025_12_17.md`
+- Reference: `docs/analysis/treatment_ctr_unbiased_analysis_2025_12_17.md`
 
 ### Key Metrics
 | Metric | Formula | Notes |

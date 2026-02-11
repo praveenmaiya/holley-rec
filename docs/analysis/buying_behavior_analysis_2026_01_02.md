@@ -226,7 +226,7 @@ $1000+     ███ 6.4%                       ██ 4.6%
 ## Related Documents
 
 - `docs/post_launch_conversion_analysis_2026_01_02.md` - Conversion analysis
-- `docs/treatment_ctr_unbiased_analysis_2025_12_17.md` - CTR MECE analysis
+- `docs/analysis/treatment_ctr_unbiased_analysis_2025_12_17.md` - CTR MECE analysis
 - `docs/apparel_vs_vehicle_parts_analysis_2025_12_27.md` - Previous category analysis
 
 ---

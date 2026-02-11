@@ -45,14 +45,14 @@ Model trains on opens (~750/day), not sends (~5000/day). CTR of opens: 5-12%.
 | File | Purpose |
 |------|---------|
 | `sql/analysis/bandit_investigation.sql` | 10 diagnostic queries (Q1-Q10) |
-| `docs/bandit_investigation_report.md` | Phase 1 findings — model updates but doesn't learn |
+| `docs/bandit/bandit_investigation_report.md` | Phase 1 findings — model updates but doesn't learn |
 
 ### Phase 2 (2026-02-07)
 | File | Purpose |
 |------|---------|
 | `sql/analysis/bandit_investigation_phase2.sql` | 6 queries (Q11-Q16): data quality, treatment count, NIG math, score forensics |
 | `src/nig_convergence_simulation.py` | NIG TS convergence simulation (v2, opens-based, 4 scenarios) |
-| `docs/bandit_investigation_report_v2.md` | Full root cause report with corrected treatment counts + simulation |
+| `docs/bandit/bandit_investigation_report_v2.md` | Full root cause report with corrected treatment counts + simulation |
 
 ### Linear Issue
 - **AUX-12221**: "Bandit model cannot learn: reduce treatment pool from 92 to 10"
@@ -81,7 +81,7 @@ Personalized emails outperform Static/Control across all 3 campaigns:
 | Abandon Cart | 5.04% | 2.95% | +71% |
 | Post Purchase | 4.13% | 1.11% | +272% |
 
-Reports: `docs/fitment_user_engagement_report.md`, `docs/personalized_vs_static_uplift_report_v2.md`
+Reports: `docs/analysis/fitment_user_engagement_report.md`, `docs/analysis/personalized_vs_static_uplift_report_v2.md`
 
 ---
 
@@ -104,19 +104,19 @@ Reports: `docs/fitment_user_engagement_report.md`, `docs/personalized_vs_static_
 ## Key References
 
 ### Bandit Investigation
-- Phase 1 report: `docs/bandit_investigation_report.md`
-- Phase 2 report: `docs/bandit_investigation_report_v2.md`
-- NIG math reference: `docs/bandit-models-deep-analysis.md`
+- Phase 1 report: `docs/bandit/bandit_investigation_report.md`
+- Phase 2 report: `docs/bandit/bandit_investigation_report_v2.md`
+- NIG math reference: `docs/bandit/bandit-models-deep-analysis.md`
 - Phase 1 SQL: `sql/analysis/bandit_investigation.sql`
 - Phase 2 SQL: `sql/analysis/bandit_investigation_phase2.sql`
 - Simulation: `src/nig_convergence_simulation.py`
 
 ### Uplift Analysis
-- Cross-campaign report: `docs/fitment_user_engagement_report.md`
-- P vs S detail: `docs/personalized_vs_static_uplift_report_v2.md`
+- Cross-campaign report: `docs/analysis/fitment_user_engagement_report.md`
+- P vs S detail: `docs/analysis/personalized_vs_static_uplift_report_v2.md`
 - Queries: `sql/analysis/uplift_analysis_queries_v2.sql`
 
 ### Pipeline
 - Pipeline v5.17: `sql/recommendations/v5_17_*.sql`
 - QA checks: `sql/validation/qa_checks.sql`
-- Schema: `docs/bigquery_schema.md`
+- Schema: `docs/architecture/bigquery_schema.md`

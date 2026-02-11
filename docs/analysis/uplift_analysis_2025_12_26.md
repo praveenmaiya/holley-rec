@@ -188,7 +188,7 @@ Find users who received both Personalized and Static treatments, then compare th
 ## Related Reports
 
 - `docs/ctr_analysis_2025_12_26.md` - Thompson Sampling CTR analysis
-- `docs/treatment_ctr_unbiased_analysis_2025_12_17.md` - Previous MECE analysis
+- `docs/analysis/treatment_ctr_unbiased_analysis_2025_12_17.md` - Previous MECE analysis
 
 ---
 

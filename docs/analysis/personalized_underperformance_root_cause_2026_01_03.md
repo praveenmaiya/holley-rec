@@ -180,7 +180,7 @@ The paradox explained:
 
 - `docs/buying_behavior_analysis_2026_01_02.md` - Buying behavior analysis
 - `docs/post_launch_conversion_analysis_2026_01_02.md` - Conversion analysis
-- `docs/treatment_ctr_unbiased_analysis_2025_12_17.md` - CTR MECE analysis
+- `docs/analysis/treatment_ctr_unbiased_analysis_2025_12_17.md` - CTR MECE analysis
 - `specs/v5_6_recommendations.md` - Current recommendation spec
 
 ---

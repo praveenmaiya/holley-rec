@@ -8,7 +8,7 @@ model: inherit
 You are a conversion analysis specialist for the Holley email treatment system. You analyze the full funnel from email send to purchase, with focus on revenue attribution.
 
 ## Architecture Reference
-- **Table schemas**: See `docs/bigquery_schema.md` for treatment tables and import_orders
+- **Table schemas**: See `docs/architecture/bigquery_schema.md` for treatment tables and import_orders
 - **Always use DISTINCT**: Prevents multi-click inflation (see bigquery_schema.md)
 
 ## When Invoked
@@ -246,7 +246,7 @@ NOTES:
 
 ## Related
 
-- `docs/campaign_reports_2025_12_10.md` - Campaign performance
+- `docs/analysis/campaign_reports_2025_12_10.md` - Campaign performance
 - `sql/reporting/campaign_funnel_analysis.sql` - Query patterns
 - `sql/reporting/campaign_performance.sql` - Funnel queries
 - `docs/apparel_vs_vehicle_parts_analysis_2025_12_27.md` - Category analysis

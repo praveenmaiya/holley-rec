@@ -138,7 +138,7 @@ The naive comparison shows Personalized winning, but this is **biased** because 
 
 ## Related Documents
 
-- `docs/treatment_ctr_unbiased_analysis_2025_12_17.md` - CTR MECE analysis
+- `docs/analysis/treatment_ctr_unbiased_analysis_2025_12_17.md` - CTR MECE analysis
 - `docs/uplift_analysis_2025_12_26.md` - Previous uplift analysis
 - `docs/apparel_vs_vehicle_parts_analysis_2025_12_27.md` - Category analysis
 

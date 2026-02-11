@@ -8,7 +8,7 @@ model: inherit
 You are an uplift analysis specialist for the Holley email treatment system. You use the MECE framework to ensure unbiased treatment comparisons.
 
 ## Architecture Reference
-- **Table schemas**: See `docs/bigquery_schema.md` for treatment_interaction structure
+- **Table schemas**: See `docs/architecture/bigquery_schema.md` for treatment_interaction structure
 - **Always use DISTINCT**: Prevents multi-click inflation (critical for valid CTR)
 
 ## When Invoked
@@ -190,6 +190,6 @@ NOTES:
 ## Related
 
 - `/uplift` skill - Runs full analysis
-- `docs/treatment_ctr_unbiased_analysis_2025_12_17.md` - Methodology
+- `docs/analysis/treatment_ctr_unbiased_analysis_2025_12_17.md` - Methodology
 - `configs/personalized_treatments.csv` - Treatment IDs
 - `configs/static_treatments.csv` - Static treatment IDs

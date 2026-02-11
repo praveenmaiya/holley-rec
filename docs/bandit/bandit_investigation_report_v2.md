@@ -27,7 +27,7 @@ Phase 2 definitively answers "is there a mistake from our side?" with a **nuance
 
 ## Phase 1 Recap
 
-Phase 1 (`docs/bandit_investigation_report.md`, 2026-02-06) established:
+Phase 1 (`docs/bandit/bandit_investigation_report.md`, 2026-02-06) established:
 
 1. Model IS updating daily (scores shift 0.001-0.005/day)
 2. Click feedback loop broken (clicks move scores by ~0.001, often negative)
