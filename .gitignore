@@ -54,6 +54,9 @@ artifacts/
 # Eval reports (generated)
 evals/reports/
 
+# Generated exports (docx from md for team sharing)
+*.docx
+
 # Environment
 .env
 .env.local
