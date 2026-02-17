@@ -2,7 +2,7 @@
 
 **Date**: 2026-02-16
 **Pipeline**: v5.17 (`sql/recommendations/v5_17_vehicle_fitment_recommendations.sql`)
-**Issues discovered**: 18 total, across bandit analysis, fitment mismatch investigation, burst A/B test, and CTR formula audit
+**Issues discovered**: 20 total, across bandit analysis, fitment mismatch investigation, burst A/B test, and CTR formula audit
 
 ---
 
@@ -39,7 +39,7 @@ final_score = alpha * norm_intent + (1-alpha) * blended_popularity
 |----|-------|----------|--------------|--------------|---------------|
 | S1 | Normalize intent + popularity | High | Intent (0-90) and popularity (0-12) on different scales; intent dominates when present | Normalize both to [0,1], combine with single alpha weight | Partially (GNN replaces popularity) |
 | S2 | Smooth 3-tier fallback | Medium | Hard thresholds create scoring cliffs (4 orders = tier 1, 3 = tier 2) | Replace discrete tiers with Bayesian shrinkage: `orders/(orders+k)` weighting | Yes (message passing handles sparsity) |
-| S3 | Universal scoring bias | Critical | Universals accumulate orders cross-segment, outscoring fitment products | Apply product-type discount (0.5x for universals) | Yes (GNN learns appropriate weights) |
+| S3 | Universal scoring bias | Critical | Universals accumulate orders cross-segment, outscoring fitment products | Apply product-type discount (0.5x for universals) | Partially (GNN may learn similar bias from training data; slot reservation is the real fix) |
 | S4 | Price affinity scoring | Low | No spending-based personalization; $50 items rec'd to $500 spenders | Gaussian decay on log-price distance, 4-tier median fallback | Partially (price as node feature) |
 | S5 | Cold-start exploration | Low | 98% of users get identical popularity-ranked top-4 per segment | Stochastic sampling from top-20 with exploration weight | Yes (GNN's core hypothesis) |
 
@@ -49,12 +49,12 @@ final_score = alpha * norm_intent + (1-alpha) * blended_popularity
 
 | ID | Issue | Severity | What's Wrong | Proposed Fix | GNN Replaces? |
 |----|-------|----------|--------------|--------------|---------------|
-| Q1 | Fitment slot reservation | Critical | 51.2% of users (258K) receive zero vehicle-specific products despite avg 353 eligible parts | Adopt v5.18 logic: 2 fitment + 2 universal + backfill when insufficient candidates | No (business constraint) |
+| Q1 | Fitment slot reservation | Critical | 51.2% of fitment users (~258K of ~504K fitment population) receive zero vehicle-specific products despite avg 353 eligible parts | Adopt v5.18 logic: 2 fitment + 2 universal + backfill when insufficient candidates | No (business constraint) |
 | Q2 | PartType diversity cap | High | `max_parttype_per_user` set to 999, effectively disabled; users get 4 products from same category | Change to 2 (1-param change in DECLARE) | No (post-ranking constraint) |
 | Q3 | Price floor too high | Medium | $50 minimum excludes valid accessories and maintenance parts | Lower `min_price` $50 to $25 (keep commodity exclusions: chemicals, stickers, etc.) | No (business rule) |
 | Q4 | Universal pool too small | Medium | `max_universal_products` capped at 500, limiting candidate diversity | Expand to 1000 | Partially (GNN scores all products) |
 | Q5 | Variant dedup docs | Low | Regex `[0-9][BRGP]$` strips color suffixes but lacks inline documentation and regression detection | Add inline comments + regression test in QA checks | No |
-| Q6 | Multi-vehicle handling | Low | Only v1 vehicle used; users with multiple vehicles get partial recommendations | Defer to GNN (multi-edge user-vehicle) | Yes |
+| Q6 | Multi-vehicle handling | Low | Only v1 vehicle used; users with multiple vehicles get partial recommendations | Defer to GNN (multi-edge user-vehicle) | No (not in Option A scope — requires v2/v3 vehicle data) |
 
 ### Evidence: Fitment Mismatch (Q1)
 
@@ -105,28 +105,34 @@ final_score = alpha * norm_intent + (1-alpha) * blended_popularity
 
 ---
 
-## Priority Phases (SQL Path, When We Return)
+## Priority Phases (SQL Path)
 
-| Phase | Items | Focus | Effort |
-|-------|-------|-------|--------|
-| **1 (Critical)** | Q1, Q2, S3 | Fix 51% zero-fitment via slot reservation + universal discount | 2-3 days |
-| **2 (Scoring)** | S1, S2, A2, A5 | Simplify formula from 8 to ~3 weights | 3-4 days |
-| **3 (Quality)** | Q3, Q4, I2, I4 | Expand candidates, optimize bandit, add monitoring | 3-4 days |
-| **4 (Long-tail)** | S4, S5, I1, I3, A1, A3, A4, Q5, Q6 | Price affinity, ESP pacing, methodology fixes | Ongoing |
+| Phase | Items | Focus | Effort | Timing |
+|-------|-------|-------|--------|--------|
+| **1 (Critical — IMMEDIATE)** | Q1, Q2, S3 | Fix 51% zero-fitment via slot reservation + universal discount | 2-3 days | **Deploy now, independent of GNN** |
+| **2 (Scoring)** | S1, S2, A2, A5 | Simplify formula from 8 to ~3 weights | 3-4 days | After Phase 1 |
+| **3 (Quality)** | Q3, Q4, I2, I4 | Expand candidates, optimize bandit, add monitoring | 3-4 days | After Phase 2 |
+| **4 (Long-tail)** | S4, S5, I1, I3, A1, A3, A4, Q5, Q6 | Price affinity, ESP pacing, methodology fixes | Ongoing | Continuous |
+
+**Phase 1 affects 51% of users TODAY.** These are business-rule fixes (slot reservation, diversity cap, universal discount) that are independent of the GNN experiment and should not wait for GNN results.
 
 ---
 
-## GNN Overlap Summary
+## GNN Overlap Summary (Conservative)
 
 | Category | Total | GNN Replaces | GNN Partially | SQL Only |
 |----------|-------|-------------|---------------|----------|
-| Scoring | 5 | 3 (S2, S3, S5) | 2 (S1, S4) | 0 |
-| Quality | 6 | 1 (Q6) | 1 (Q4) | 4 (Q1, Q2, Q3, Q5) |
+| Scoring | 5 | 2 (S2, S5) | 3 (S1, S3, S4) | 0 |
+| Quality | 6 | 0 | 1 (Q4) | 5 (Q1, Q2, Q3, Q5, Q6) |
 | Infrastructure | 4 | 0 | 0 | 4 |
 | Analysis | 5 | 0 | 0 | 5 |
-| **Total** | **20** | **4** | **3** | **13** |
+| **Total** | **20** | **2** | **4** | **14** |
 
-Even with GNN, 13 issues remain SQL-only. Phase 1 critical fixes (Q1, Q2, S3) should be deployed regardless of GNN timeline.
+Even with GNN, 14 issues remain SQL-only. Phase 1 critical fixes (Q1, Q2, S3) must be deployed immediately regardless of GNN timeline.
+
+**Reclassification notes** (vs prior version):
+- S3 (universal bias): Moved from "Replaces" to "Partially" — GNN can learn the same bias from training data; slot reservation (Q1) is the primary fix
+- Q6 (multi-vehicle): Moved from "Replaces" to "SQL Only" — not in GNN Option A scope, requires v2/v3 vehicle data
 
 ---
 
