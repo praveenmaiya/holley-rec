@@ -1,7 +1,7 @@
 # GNN Option A: Clean Hypothesis Test — Design Spec
 
 **Date**: 2026-02-16
-**Status**: Draft (v2 — revised after review)
+**Status**: Draft (v3 — final review fixes)
 **Author**: Praveen Maiya
 **Linear**: AUX-12314
 
@@ -16,6 +16,15 @@ The v5.17 SQL pipeline serves 258K fitment+email users. 98% are cold (no browsin
 This is a clean hypothesis test. If it fails, we skip to Option A+ (semantic enrichment with LLM-generated product embeddings). If it succeeds, we justify GNN infrastructure investment.
 
 **Why A before A+**: The approach comparison doc (`docs/gnn/gnn_approach_comparison.md`) recommends A+ as the most promising option. We run A first because: (1) it isolates whether graph structure alone adds value — if topology is useless, semantic enrichment on a useless graph is wasted effort; (2) A is simpler to implement and debug; (3) A's infrastructure (data export, evaluation harness, scoring pipeline) is fully reusable for A+.
+
+### Hard Prerequisites
+
+Before GNN implementation begins:
+
+1. **Deploy Phase 1 SQL fixes (Q1, Q2, S3)** — fitment slot reservation, PartType diversity cap, universal scoring discount. These affect 51% of users today and are independent of GNN. The GNN SQL baseline must be evaluated against the post-Phase-1 pipeline, not the current broken v5.17.
+2. **Confirm GPU access** — T4 on gke-metaflow-dev (open question with Sumeet).
+
+GNN offline evaluation should compare against the Phase-1-fixed SQL baseline. Comparing against unfixed v5.17 would overstate GNN's improvement.
 
 ---
 
@@ -381,10 +390,11 @@ Development effort: ~2-3 weeks for implementation + evaluation (assuming GPU acc
 
 GNN output writes to a **shadow table** (`temp_holley_gnn.gnn_recommendations`), NOT directly to production. The production table (`company_1950_jp.final_vehicle_recommendations`) continues to be populated by SQL v5.17.
 
-Cutover to GNN requires:
-1. Offline eval passes go/no-go thresholds
-2. Online A/B test shows positive results
-3. Manual table swap (GNN shadow -> production)
+Cutover to GNN requires ALL of:
+1. Offline eval passes go/no-go thresholds (pre-rules Hit Rate@4)
+2. Email-click sanity check shows **directional agreement** (GNN >= SQL on email-click Hit Rate@4 for the 19.7K recipient cohort)
+3. Online A/B test shows positive results on per-user binary click rate
+4. Manual table swap (GNN shadow -> production)
 
 Rollback = stop writing GNN shadow table, production SQL pipeline is unaffected.
 
@@ -404,12 +414,14 @@ The GNN replaces the SQL scoring that populates product slots within treatments.
 ### Online A/B Test Design (If GO)
 
 - **Randomization unit**: User (not session or email)
-- **Arms**: Control (SQL v5.17 recs) vs Treatment (GNN recs)
+- **Arms**: Control (SQL recs) vs Treatment (GNN recs)
 - **Split**: 50/50
 - **Primary metric**: Per-user binary click rate (did user click any email in 30 days?)
 - **Guardrail metrics**: Unsubscribe rate, open rate, conversion rate
 - **Duration**: 4 weeks minimum (need ~2 weekly email cycles per user)
-- **Sample size**: ~129K per arm (258K target / 2) — sufficient for detecting +1% absolute lift at 80% power
+- **Sample size**: ~10K per arm (based on ~20K delivered users in Dec-Feb, not 258K target population). ESP rate limits and bandit allocation mean most target users never receive email in a 4-week window. Power analysis must use **expected delivered volume**, not total eligible.
+- **Treatment policy**: Freeze bandit treatment allocation during test (fixed treatment distribution across both arms) to isolate recommendation quality from template mix effects. Alternatively, stratify by treatment and analyze with treatment fixed effects.
+- **Fallback handling**: Users whose vehicle doesn't match a GNN vehicle node fall back to SQL recs. Track fallback rate and **exclude fallback users from primary analysis** (they receive identical recs in both arms). Apply identical fallback logic in control arm for parity.
 
 ### Vehicle Change Handling
 
