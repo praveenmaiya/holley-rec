@@ -1,8 +1,8 @@
 """Recommendation evaluation metrics."""
 
-import numpy as np
-import pandas as pd
 from typing import Any
+
+import numpy as np
 
 
 def precision_at_k(
@@ -87,6 +87,50 @@ def ndcg_at_k(
     return dcg / idcg
 
 
+def hit_rate_at_k(
+    predictions: list[int],
+    actuals: set[int],
+    k: int = 4
+) -> float:
+    """Compute Hit Rate@k (binary: 1 if any top-k prediction is relevant).
+
+    Args:
+        predictions: Ordered list of predicted item IDs.
+        actuals: Set of relevant item IDs.
+        k: Number of top predictions to consider.
+
+    Returns:
+        1.0 if any of top-k predictions is in actuals, else 0.0.
+    """
+    if not predictions or not actuals:
+        return 0.0
+
+    top_k = predictions[:k]
+    return 1.0 if any(item in actuals for item in top_k) else 0.0
+
+
+def mrr(
+    predictions: list[int],
+    actuals: set[int],
+) -> float:
+    """Compute Mean Reciprocal Rank.
+
+    Args:
+        predictions: Ordered list of predicted item IDs.
+        actuals: Set of relevant item IDs.
+
+    Returns:
+        1/rank of first relevant item (0.0 if none found).
+    """
+    if not predictions or not actuals:
+        return 0.0
+
+    for i, item in enumerate(predictions):
+        if item in actuals:
+            return 1.0 / (i + 1)
+    return 0.0
+
+
 def mean_average_precision(
     predictions: list[int],
     actuals: set[int],
@@ -165,7 +209,9 @@ def compute_all_metrics(
     precisions = {k: [] for k in k_values}
     recalls = {k: [] for k in k_values}
     ndcgs = {k: [] for k in k_values}
+    hit_rates = {k: [] for k in k_values}
     maps = []
+    mrrs = []
 
     for user_id in user_predictions:
         preds = user_predictions[user_id]
@@ -178,16 +224,20 @@ def compute_all_metrics(
             precisions[k].append(precision_at_k(preds, actuals, k))
             recalls[k].append(recall_at_k(preds, actuals, k))
             ndcgs[k].append(ndcg_at_k(preds, actuals, k))
+            hit_rates[k].append(hit_rate_at_k(preds, actuals, k))
 
         maps.append(mean_average_precision(preds, actuals))
+        mrrs.append(mrr(preds, actuals))
 
     # Average metrics
     for k in k_values:
         results[f"precision_at_{k}"] = np.mean(precisions[k]) if precisions[k] else 0.0
         results[f"recall_at_{k}"] = np.mean(recalls[k]) if recalls[k] else 0.0
         results[f"ndcg_at_{k}"] = np.mean(ndcgs[k]) if ndcgs[k] else 0.0
+        results[f"hit_rate_at_{k}"] = np.mean(hit_rates[k]) if hit_rates[k] else 0.0
 
     results["map"] = np.mean(maps) if maps else 0.0
+    results["mrr"] = np.mean(mrrs) if mrrs else 0.0
     results["num_users_evaluated"] = len(maps)
 
     # Coverage metrics

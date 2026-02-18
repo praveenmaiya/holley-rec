@@ -23,6 +23,7 @@ Before GNN implementation begins:
 
 1. **Deploy Phase 1 SQL fixes (Q1, Q2, S3)** — fitment slot reservation, PartType diversity cap, universal scoring discount. These affect 51% of users today and are independent of GNN. The GNN SQL baseline must be evaluated against the post-Phase-1 pipeline, not the current broken v5.17.
 2. **Confirm GPU access** — T4 on gke-metaflow-dev (open question with Sumeet).
+3. **Resolve or mitigate I1/I3** — ESP rate limiting (67% drops) and interaction tracking gap must be addressed before online A/B launch. Offline implementation can proceed without this.
 
 GNN offline evaluation should compare against the Phase-1-fixed SQL baseline. Comparing against unfixed v5.17 would overstate GNN's improvement.
 
@@ -257,7 +258,7 @@ This separates model quality from business constraint impact. If pre-rules GNN >
 
 ### Baseline
 
-SQL v5.17 recommendations reshaped to long format (email_lower, sku, rank). Same test set interactions and evaluation cohort used for both GNN and SQL. **Important**: SQL baseline must be re-run with $25 price floor to match GNN candidate set (current production uses $50).
+Phase-1-fixed SQL baseline recommendations reshaped to long format (email_lower, sku, rank). Same test set interactions and evaluation cohort used for both GNN and SQL. **Important**: SQL baseline must be re-run with $25 price floor to match GNN candidate set (current production uses $50).
 
 ### Go/No-Go Thresholds
 
@@ -296,7 +297,7 @@ Compare to naive approach: 258K x 25K = 6.5B dot products.
 
 The v1 data provides a single vehicle per user. For this phase, each user is assigned to exactly one vehicle group based on their v1_make + v1_model. Multi-vehicle handling (Q6 in the backlog) is deferred — it requires v2/v3 vehicle data that is currently sparse.
 
-If a user's v1 vehicle doesn't match any vehicle node (typo, unsupported model), they fall back to SQL v5.17 recommendations.
+If a user's v1 vehicle doesn't match any vehicle node (typo, unsupported model), they fall back to Phase-1-fixed SQL baseline recommendations.
 
 ### Business Rules (Post-GNN, Hard Constraints)
 
@@ -388,7 +389,7 @@ Development effort: ~2-3 weeks for implementation + evaluation (assuming GPU acc
 
 ### Rollback Plan
 
-GNN output writes to a **shadow table** (`temp_holley_gnn.gnn_recommendations`), NOT directly to production. The production table (`company_1950_jp.final_vehicle_recommendations`) continues to be populated by SQL v5.17.
+GNN output writes to a **shadow table** (`temp_holley_gnn.gnn_recommendations`), NOT directly to production. The production table (`company_1950_jp.final_vehicle_recommendations`) continues to be populated by the Phase-1-fixed SQL baseline.
 
 Cutover to GNN requires ALL of:
 1. Offline eval passes go/no-go thresholds (pre-rules Hit Rate@4)
@@ -419,8 +420,8 @@ The GNN replaces the SQL scoring that populates product slots within treatments.
 - **Primary metric**: Per-user binary click rate (did user click any email in 30 days?)
 - **Guardrail metrics**: Unsubscribe rate, open rate, conversion rate
 - **Duration**: 4 weeks minimum (need ~2 weekly email cycles per user)
-- **Sample size**: ~10K per arm (based on ~20K delivered users in Dec-Feb, not 258K target population). ESP rate limits and bandit allocation mean most target users never receive email in a 4-week window. Power analysis must use **expected delivered volume**, not total eligible.
-- **Treatment policy**: Freeze bandit treatment allocation during test (fixed treatment distribution across both arms) to isolate recommendation quality from template mix effects. Alternatively, stratify by treatment and analyze with treatment fixed effects.
+- **Sample size**: Dec-Feb delivered 19.7K users over 3 months (~6.6K/month). A 4-week test window yields ~6-7K delivered users total, so ~3-3.5K per arm. This is underpowered for +1% absolute detection. Either extend to 8 weeks or accept lower power for larger effect sizes (detectable: +3% at 80% power with 3.5K/arm). Power analysis must use **expected delivered volume**, not total eligible (258K target population).
+- **Treatment policy**: **Decision**: Freeze bandit treatment allocation during online A/B test. Fixed-effects stratification is the fallback only if freezing is technically infeasible. This isolates recommendation quality from template mix effects.
 - **Fallback handling**: Users whose vehicle doesn't match a GNN vehicle node fall back to SQL recs. Track fallback rate and **exclude fallback users from primary analysis** (they receive identical recs in both arms). Apply identical fallback logic in control arm for parity.
 
 ### Vehicle Change Handling
