@@ -12,6 +12,7 @@
       "Bash(git diff:*)",
       "Bash(git log:*)",
       "Bash(git branch:*)",
+      "Bash(codex:*)",
       "Bash(ls:*)",
       "Bash(head:*)",
       "Bash(tail:*)",
