@@ -45,7 +45,7 @@ class GNNDataLoader:
             "BASELINE_TABLE": baseline_table,
         }
         for sql_file in ["export_nodes.sql", "export_edges.sql", "export_test_set.sql",
-                         "export_sql_baseline.sql"]:
+                         "export_sql_baseline.sql", "export_user_purchases.sql"]:
             path = SQL_DIR / sql_file
             logger.info(f"Running {sql_file}...")
             self.bq.run_query_file(str(path), params=params)
@@ -135,6 +135,39 @@ class GNNDataLoader:
         df = self.bq.run_query(f"SELECT * FROM `{table_prefix}.sql_baseline`")
         logger.info(f"Loaded {len(df)} SQL baseline recommendations")
         return df
+
+    def load_user_purchases(self) -> dict[str, set[str]]:
+        """Load 365-day purchase history for exclusion.
+
+        Returns:
+            email_lower -> set of base_sku strings.
+        """
+        table_prefix = f"{self.project_id}.{self.dataset}"
+        try:
+            df = self.bq.run_query(
+                f"SELECT email_lower, base_sku FROM `{table_prefix}.user_purchases`"
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to load user_purchases table; proceeding without purchase exclusion: %s",
+                exc,
+            )
+            return {}
+        logger.info(f"Loaded {len(df)} user-purchase rows")
+
+        required_cols = {"email_lower", "base_sku"}
+        missing_cols = required_cols - set(df.columns)
+        if missing_cols:
+            raise ValueError(
+                "user_purchases table missing required columns: "
+                + ", ".join(sorted(missing_cols))
+            )
+
+        purchases: dict[str, set[str]] = {}
+        for email, group in df.groupby("email_lower"):
+            purchases[email] = set(group["base_sku"].tolist())
+        logger.info(f"Purchase exclusion: {len(purchases)} users with purchases")
+        return purchases
 
     def get_id_mappings(self) -> dict[str, dict]:
         """Return all ID mappings."""

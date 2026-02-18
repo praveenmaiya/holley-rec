@@ -20,6 +20,7 @@ def _qa_row(
     rec1_sku: str = "P001",
     rec1_price: float = 50.0,
     rec1_score: float = 0.9,
+    rec1_image_url: str = "https://cdn.example.com/p1.jpg",
     rec2_sku: str | None = None,
     rec2_price: float | None = None,
     rec2_score: float | None = None,
@@ -33,15 +34,27 @@ def _qa_row(
     return {
         "email_lower": email,
         "rec1_sku": rec1_sku,
+        "rec1_name": "Product 1",
+        "rec1_url": "https://example.com/p1",
+        "rec1_image_url": rec1_image_url,
         "rec1_price": rec1_price,
         "rec1_score": rec1_score,
         "rec2_sku": rec2_sku,
+        "rec2_name": None,
+        "rec2_url": None,
+        "rec2_image_url": None,
         "rec2_price": rec2_price,
         "rec2_score": rec2_score,
         "rec3_sku": rec3_sku,
+        "rec3_name": None,
+        "rec3_url": None,
+        "rec3_image_url": None,
         "rec3_price": rec3_price,
         "rec3_score": rec3_score,
         "rec4_sku": rec4_sku,
+        "rec4_name": None,
+        "rec4_url": None,
+        "rec4_image_url": None,
         "rec4_price": rec4_price,
         "rec4_score": rec4_score,
         "fitment_count": 1,
@@ -135,6 +148,32 @@ class TestGNNScorer:
 
         assert len(result) <= 4
 
+    def test_select_top4_respects_excluded_products(self, scorer_setup):
+        from src.gnn.scorer import GNNScorer
+
+        model, data, id_map, nodes, config, mock_bq = scorer_setup
+
+        scorer = GNNScorer(
+            model=model, data=data, id_mappings=id_map,
+            nodes=nodes, config=config, bq_client=mock_bq,
+        )
+
+        fitment_ids = [0, 1, 2, 3, 4]
+        fitment_scores = torch.tensor([5.0, 4.0, 3.0, 2.0, 1.0])
+        universal_ids = [15, 16, 17, 18, 19]
+        universal_scores = torch.tensor([4.5, 3.5, 2.5, 1.5, 0.5])
+
+        excluded = {0, 15}
+        result = scorer._select_top4(
+            fitment_ids, fitment_scores,
+            universal_ids, universal_scores,
+            excluded_products=excluded,
+        )
+
+        pids = [pid for pid, _ in result]
+        assert 0 not in pids
+        assert 15 not in pids
+
     def test_format_row_has_expected_columns(self, scorer_setup):
         from src.gnn.scorer import GNNScorer
 
@@ -150,6 +189,9 @@ class TestGNNScorer:
 
         assert row["email_lower"] == "test@example.com"
         assert "rec1_sku" in row
+        assert "rec1_name" in row
+        assert "rec1_url" in row
+        assert "rec1_image_url" in row
         assert "rec4_sku" in row
         assert "fitment_count" in row
         assert "model_version" in row
@@ -205,6 +247,9 @@ class TestGNNScorer:
         expected_cols = {
             "email_lower",
             "rec1_sku", "rec2_sku", "rec3_sku", "rec4_sku",
+            "rec1_name", "rec2_name", "rec3_name", "rec4_name",
+            "rec1_url", "rec2_url", "rec3_url", "rec4_url",
+            "rec1_image_url", "rec2_image_url", "rec3_image_url", "rec4_image_url",
             "rec1_price", "rec2_price", "rec3_price", "rec4_price",
             "rec1_score", "rec2_score", "rec3_score", "rec4_score",
             "fitment_count", "model_version",
@@ -212,6 +257,23 @@ class TestGNNScorer:
         assert expected_cols.issubset(df.columns)
         consented = set(nodes["users"].loc[nodes["users"]["has_email_consent"], "email_lower"])
         assert set(df["email_lower"]).issubset(consented)
+
+    def test_score_all_users_uses_universal_pool_when_fitment_missing(self, scorer_setup, mocker):
+        from src.gnn.scorer import GNNScorer
+
+        model, data, id_map, nodes, config, mock_bq = scorer_setup
+
+        scorer = GNNScorer(
+            model=model, data=data, id_mappings=id_map,
+            nodes=nodes, config=config, bq_client=mock_bq,
+        )
+        scorer.vehicle_products = {}  # Force no-fitment scenario for every vehicle group.
+        mocker.patch.object(scorer, "_qa_checks", return_value=None)
+
+        df = scorer.score_all_users()
+
+        assert not df.empty
+        assert (df["fitment_count"] == 0).all()
 
     def test_qa_raises_on_price_floor_violation(self, scorer_setup):
         from src.gnn.scorer import GNNScorer, QAFailedError
@@ -278,3 +340,114 @@ class TestGNNScorer:
 
         with pytest.raises(QAFailedError, match="expected >= 1"):
             scorer.score_all_users()
+
+    def test_purchase_exclusion_filters_bought_products(self, scorer_setup):
+        from src.gnn.scorer import GNNScorer
+
+        model, data, id_map, nodes, config, mock_bq = scorer_setup
+
+        # Get a sku that exists in the product catalog
+        products_df = nodes["products"]
+        excluded_sku = products_df["base_sku"].iloc[0]
+
+        user_purchases = {"user_1@test.com": {excluded_sku}}
+
+        scorer = GNNScorer(
+            model=model, data=data, id_mappings=id_map,
+            nodes=nodes, config=config, bq_client=mock_bq,
+            user_purchases=user_purchases,
+        )
+
+        # Verify the exclusion was built
+        assert "user_1@test.com" in scorer.user_excluded_products
+        pid = id_map["product_to_id"][excluded_sku]
+        assert pid in scorer.user_excluded_products["user_1@test.com"]
+
+    def test_purchase_exclusion_merges_colliding_normalized_emails(self, scorer_setup):
+        from src.gnn.scorer import GNNScorer
+
+        model, data, id_map, nodes, config, mock_bq = scorer_setup
+
+        products_df = nodes["products"]
+        sku_a = products_df["base_sku"].iloc[0]
+        sku_b = products_df["base_sku"].iloc[1]
+
+        scorer = GNNScorer(
+            model=model, data=data, id_mappings=id_map,
+            nodes=nodes, config=config, bq_client=mock_bq,
+            user_purchases={
+                "User_1@Test.com": {sku_a},
+                " user_1@test.com ": {sku_b},
+            },
+        )
+
+        merged = scorer.user_excluded_products["user_1@test.com"]
+        assert id_map["product_to_id"][sku_a] in merged
+        assert id_map["product_to_id"][sku_b] in merged
+
+    def test_purchase_exclusion_empty_by_default(self, scorer_setup):
+        from src.gnn.scorer import GNNScorer
+
+        model, data, id_map, nodes, config, mock_bq = scorer_setup
+
+        scorer = GNNScorer(
+            model=model, data=data, id_mappings=id_map,
+            nodes=nodes, config=config, bq_client=mock_bq,
+        )
+
+        assert scorer.user_excluded_products == {}
+
+    def test_qa_raises_on_non_https_image_url(self, scorer_setup):
+        """HTTPS image URL validation catches protocol-relative and http URLs."""
+        from src.gnn.scorer import GNNScorer, QAFailedError
+
+        model, data, id_map, nodes, config, mock_bq = scorer_setup
+
+        scorer = GNNScorer(
+            model=model, data=data, id_mappings=id_map,
+            nodes=nodes, config=config, bq_client=mock_bq,
+        )
+
+        df = pd.DataFrame([_qa_row(rec1_image_url="http://cdn.example.com/p1.jpg")])
+
+        with pytest.raises(QAFailedError, match="non-HTTPS"):
+            scorer._qa_checks(df)
+
+    def test_qa_passes_with_empty_image_urls(self, scorer_setup):
+        """Empty/None image URLs should not trigger HTTPS validation failure."""
+        from src.gnn.scorer import GNNScorer
+
+        model, data, id_map, nodes, config, mock_bq = scorer_setup
+
+        scorer = GNNScorer(
+            model=model, data=data, id_mappings=id_map,
+            nodes=nodes, config=config, bq_client=mock_bq,
+        )
+
+        df = pd.DataFrame([_qa_row(rec1_image_url="")])
+        # Should not raise — empty strings are skipped
+        scorer._qa_checks(df)
+
+    def test_purchase_exclusion_normalizes_email_and_sku(self, scorer_setup):
+        """Purchase exclusion normalizes email (lowercase/trim) and SKU (variant strip)."""
+        from src.gnn.scorer import GNNScorer
+
+        model, data, id_map, nodes, config, mock_bq = scorer_setup
+
+        products_df = nodes["products"]
+        base_sku = products_df["base_sku"].iloc[0]
+        # Add variant suffix that should be stripped
+        variant_sku = base_sku + "B" if base_sku[-1].isdigit() else base_sku
+
+        user_purchases = {"  User_1@Test.COM  ": {variant_sku}}
+
+        scorer = GNNScorer(
+            model=model, data=data, id_mappings=id_map,
+            nodes=nodes, config=config, bq_client=mock_bq,
+            user_purchases=user_purchases,
+        )
+
+        # Email should be normalized to lowercase/trimmed
+        assert "user_1@test.com" in scorer.user_excluded_products
+        pid = id_map["product_to_id"][base_sku]
+        assert pid in scorer.user_excluded_products["user_1@test.com"]

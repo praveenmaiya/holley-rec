@@ -2,7 +2,10 @@
 
 import pytest
 
-from src.gnn.rules import apply_slot_reservation_with_diversity
+torch = pytest.importorskip("torch")
+pytest.importorskip("torch_geometric")
+
+from src.gnn.rules import apply_slot_reservation_with_diversity, build_fitment_index  # noqa: E402
 
 
 @pytest.fixture
@@ -191,3 +194,121 @@ class TestSlotReservation:
         assert len(result) == 4
         assert result[0] == 99
         assert result[1] == 100
+
+    def test_excluded_products_are_skipped(self, part_types):
+        """Products in excluded_products set are filtered from all phases."""
+        ranked = [0, 1, 10, 11, 2, 3, 12, 13]
+        fitment = {0, 1, 2, 3}
+        universal = {10, 11, 12, 13}
+
+        result = apply_slot_reservation_with_diversity(
+            ranked, fitment, universal, part_types,
+            excluded_products={0, 10},  # exclude top-ranked fitment and universal
+        )
+
+        assert len(result) == 4
+        assert 0 not in result
+        assert 10 not in result
+        # Fitment: 1 (Ignition), then next fitment in ranked order
+        assert result[0] == 1
+        # Universal: 11 (Wheels)
+        assert 11 in result
+
+    def test_excluded_products_none_has_no_effect(self, part_types):
+        """excluded_products=None behaves same as empty set."""
+        ranked = [0, 1, 10, 11]
+        fitment = {0, 1}
+        universal = {10, 11}
+
+        result = apply_slot_reservation_with_diversity(
+            ranked, fitment, universal, part_types,
+            excluded_products=None,
+        )
+
+        assert len(result) == 4
+        assert result[0] == 0
+
+
+class TestBuildFitmentIndex:
+    """Tests for the shared build_fitment_index utility."""
+
+    @staticmethod
+    def _make_hetero_data(own_edges, fits_edges):
+        """Build a minimal HeteroData with ownership and fitment edges."""
+        from torch_geometric.data import HeteroData
+
+        data = HeteroData()
+        data["user"].num_nodes = 5
+        data["vehicle"].num_nodes = 5
+        data["product"].num_nodes = 10
+
+        if own_edges:
+            users, vehicles = zip(*own_edges)
+            data["user", "owns", "vehicle"].edge_index = torch.tensor(
+                [list(users), list(vehicles)], dtype=torch.long
+            )
+        if fits_edges:
+            vehicles, products = zip(*fits_edges)
+            data["vehicle", "rev_fits", "product"].edge_index = torch.tensor(
+                [list(vehicles), list(products)], dtype=torch.long
+            )
+        return data
+
+    def test_single_vehicle_user(self):
+        """User owning one vehicle gets that vehicle's fitment products."""
+        data = self._make_hetero_data(
+            own_edges=[(0, 0)],
+            fits_edges=[(0, 1), (0, 2), (0, 3)],
+        )
+        result = build_fitment_index(data)
+        assert set(result[0]) == {1, 2, 3}
+
+    def test_multi_vehicle_user_gets_union(self):
+        """User owning two vehicles gets products from BOTH (no overwrite)."""
+        data = self._make_hetero_data(
+            own_edges=[(0, 0), (0, 1)],
+            fits_edges=[(0, 1), (0, 2), (1, 3), (1, 4)],
+        )
+        result = build_fitment_index(data)
+        # User 0 owns vehicle 0 (products 1,2) and vehicle 1 (products 3,4)
+        assert set(result[0]) == {1, 2, 3, 4}
+
+    def test_no_duplicates_in_multi_vehicle(self):
+        """Same product from two vehicles appears only once."""
+        data = self._make_hetero_data(
+            own_edges=[(0, 0), (0, 1)],
+            fits_edges=[(0, 5), (1, 5)],  # product 5 fits both vehicles
+        )
+        result = build_fitment_index(data)
+        assert result[0].count(5) == 1
+
+    def test_missing_edge_types_returns_empty(self):
+        """Returns empty dict when ownership or fitment edges are missing."""
+        from torch_geometric.data import HeteroData
+
+        data = HeteroData()
+        data["user"].num_nodes = 2
+        result = build_fitment_index(data)
+        assert result == {}
+
+    def test_vehicle_with_no_fitment(self):
+        """User owns a vehicle that has no fitment products."""
+        data = self._make_hetero_data(
+            own_edges=[(0, 0)],
+            fits_edges=[],  # no fitment edges at all
+        )
+        # fits_edges is empty, so no edge_index is created — need to handle this
+        from torch_geometric.data import HeteroData
+
+        data = HeteroData()
+        data["user"].num_nodes = 2
+        data["vehicle"].num_nodes = 2
+        data["product"].num_nodes = 2
+        data["user", "owns", "vehicle"].edge_index = torch.tensor(
+            [[0], [0]], dtype=torch.long
+        )
+        data["vehicle", "rev_fits", "product"].edge_index = torch.tensor(
+            [[], []], dtype=torch.long
+        )
+        result = build_fitment_index(data)
+        assert result[0] == []

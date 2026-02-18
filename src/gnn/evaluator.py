@@ -10,7 +10,7 @@ import pandas as pd
 import torch
 
 from src.gnn.model import HolleyGAT
-from src.gnn.rules import apply_slot_reservation_with_diversity
+from src.gnn.rules import apply_slot_reservation_with_diversity, build_fitment_index
 from src.metrics import hit_rate_at_k, mrr, ndcg_at_k, recall_at_k
 
 if TYPE_CHECKING:
@@ -127,29 +127,7 @@ class GNNEvaluator:
         self.user_tiers = user_engagement_tiers or {}
 
         # Build fitment index: user_id -> list of product_ids
-        self.user_fitment_products = self._build_fitment_index()
-
-    def _build_fitment_index(self) -> dict[int, list[int]]:
-        """Build user -> fitment product mapping from graph edges."""
-        result: dict[int, list[int]] = {}
-
-        own_type = ("user", "owns", "vehicle")
-        fits_type = ("vehicle", "rev_fits", "product")
-
-        if own_type not in self.data.edge_types or fits_type not in self.data.edge_types:
-            return result
-
-        own_ei = self.data[own_type].edge_index
-        fits_ei = self.data[fits_type].edge_index
-
-        vehicle_products: dict[int, set[int]] = {}
-        for v, p in zip(fits_ei[0].cpu().numpy(), fits_ei[1].cpu().numpy()):
-            vehicle_products.setdefault(int(v), set()).add(int(p))
-
-        for u, v in zip(own_ei[0].cpu().numpy(), own_ei[1].cpu().numpy()):
-            result[int(u)] = list(vehicle_products.get(int(v), set()))
-
-        return result
+        self.user_fitment_products = build_fitment_index(self.data)
 
     @torch.no_grad()
     def evaluate(self, split: str = "test") -> dict[str, Any]:
@@ -187,12 +165,14 @@ class GNNEvaluator:
 
         logger.info(f"Evaluable {split} users: {len(evaluable_users)}")
 
+        n_fallback = 0
         for uid in evaluable_users:
             fitment = self.user_fitment_products.get(uid, [])
             # Combine fitment + universal products (deduplicated, preserving order)
             eligible = list(dict.fromkeys(fitment + self.universal_product_ids))
             if not eligible:
                 eligible = list(range(self.data["product"].num_nodes))
+                n_fallback += 1
 
             eligible_t = torch.tensor(eligible, dtype=torch.long)
             scores = torch.mv(product_embs[eligible_t], user_embs[uid])
@@ -202,6 +182,13 @@ class GNNEvaluator:
 
             post_rules = self._apply_business_rules(uid, pre_rules)
             gnn_post_rules_by_user[uid] = post_rules
+
+        if n_fallback > 0:
+            logger.warning(
+                "Candidate fallback: %d/%d eval users had no fitment/universal products, "
+                "using all %d products as candidates",
+                n_fallback, len(evaluable_users), self.data["product"].num_nodes,
+            )
 
         # Compute metrics
         gnn_pre = self._compute_metrics(gnn_pre_rules_by_user, k_values)
@@ -258,7 +245,12 @@ class GNNEvaluator:
         user_id: int,
         ranked_products: list[int],
     ) -> list[int]:
-        """Apply post-GNN business rules (fitment slots, diversity, etc.)."""
+        """Apply post-GNN business rules (fitment slots, diversity, etc.).
+
+        Note: purchase exclusion is intentionally omitted here. Evaluation
+        measures model ranking quality, not production filtering. Adding
+        exclusion would make offline metrics non-comparable across runs.
+        """
         fitment_set = set(self.user_fitment_products.get(user_id, []))
         universal_set = set(self.universal_product_ids)
         return apply_slot_reservation_with_diversity(

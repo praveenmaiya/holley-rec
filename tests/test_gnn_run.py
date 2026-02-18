@@ -25,6 +25,9 @@ class _DummyLoader:
     def load_sql_baseline(self):
         return pd.DataFrame({"email_lower": ["orig_user@test.com"], "sku": ["P001"], "rank": [1]})
 
+    def load_user_purchases(self):
+        return {}
+
 
 def _graph_triplet():
     data = {

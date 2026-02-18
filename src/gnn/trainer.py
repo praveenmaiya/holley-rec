@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 
 from src.gnn.model import HolleyGAT
+from src.gnn.rules import build_fitment_index
 from src.metrics import hit_rate_at_k
 from src.wandb_utils import log_metrics
 
@@ -79,7 +80,7 @@ class GNNTrainer:
         self._prepare_training_edges()
 
         # Build fitment index for hard negative sampling
-        self._build_fitment_index()
+        self.user_fitment_products = build_fitment_index(self.data)
 
         # Universal pool for validation-time candidate parity with evaluator.
         universal_mask = getattr(self.data["product"], "is_universal", None)
@@ -91,6 +92,7 @@ class GNNTrainer:
             self.universal_product_ids = []
         self.all_product_ids = list(range(self.data["product"].num_nodes))
         self._eval_candidate_cache: dict[int, list[int]] = {}
+        self._fallback_warned = False
 
     def _prepare_training_edges(self):
         """Extract positive training edges as (user_id, product_id) pairs."""
@@ -105,28 +107,6 @@ class GNNTrainer:
 
         logger.info(f"Training edges: {len(self.pos_users)} positive pairs")
 
-    def _build_fitment_index(self):
-        """Build user -> set of fitment products for hard negative sampling."""
-        self.user_fitment_products: dict[int, list[int]] = {}
-
-        # User -> Vehicle via ownership edges
-        own_type = ("user", "owns", "vehicle")
-        fits_type = ("vehicle", "rev_fits", "product")
-
-        if own_type in self.data.edge_types and fits_type in self.data.edge_types:
-            own_ei = self.data[own_type].edge_index
-            fits_ei = self.data[fits_type].edge_index
-
-            # Vehicle -> products
-            vehicle_products: dict[int, set[int]] = {}
-            for v, p in zip(fits_ei[0].cpu().numpy(), fits_ei[1].cpu().numpy()):
-                vehicle_products.setdefault(int(v), set()).add(int(p))
-
-            # User -> vehicle -> products
-            for u, v in zip(own_ei[0].cpu().numpy(), own_ei[1].cpu().numpy()):
-                products = vehicle_products.get(int(v), set())
-                self.user_fitment_products[int(u)] = list(products)
-
     def _get_eval_candidates(self, user_id: int) -> list[int]:
         """Return validation candidate pool: fitment + universal, deduplicated."""
         if user_id in self._eval_candidate_cache:
@@ -136,6 +116,13 @@ class GNNTrainer:
         eligible = list(dict.fromkeys(fitment + self.universal_product_ids))
         if not eligible:
             eligible = self.all_product_ids
+            if not self._fallback_warned:
+                logger.warning(
+                    "Eval candidate fallback: user %d has no fitment/universal products, "
+                    "using all %d products (80x+ cost increase)",
+                    user_id, len(eligible),
+                )
+                self._fallback_warned = True
 
         self._eval_candidate_cache[user_id] = eligible
         return eligible

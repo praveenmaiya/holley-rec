@@ -296,6 +296,9 @@ def mode_score(config):
     )
     model.load_state_dict(checkpoint["model_state_dict"])
 
+    # Load purchase history for exclusion (365-day lookback)
+    user_purchases = loader.load_user_purchases()
+
     scorer_cls = _get_scorer_cls()
     scorer = scorer_cls(
         model=model,
@@ -303,6 +306,7 @@ def mode_score(config):
         id_mappings=loader.get_id_mappings(),
         nodes=nodes,
         config=config,
+        user_purchases=user_purchases,
     )
 
     df = scorer.score_all_users()

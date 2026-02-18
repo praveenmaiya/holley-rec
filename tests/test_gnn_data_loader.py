@@ -218,6 +218,7 @@ class TestGNNDataLoader:
             "export_edges.sql",
             "export_test_set.sql",
             "export_sql_baseline.sql",
+            "export_user_purchases.sql",
         ]
         for call in mock_bq.run_query_file.call_args_list:
             assert call.kwargs["params"]["BASELINE_TABLE"] == "eval.table"
@@ -262,3 +263,38 @@ class TestGNNDataLoader:
         assert len(df) == 1
         query = mock_bq.run_query.call_args.args[0]
         assert "sql_baseline" in query
+
+    def test_load_user_purchases_groups_by_email(self, gnn_config, mock_bq):
+        mock_bq.run_query.return_value = pd.DataFrame({
+            "email_lower": ["a@test.com", "a@test.com", "b@test.com"],
+            "base_sku": ["SKU1", "SKU2", "SKU3"],
+        })
+
+        loader = GNNDataLoader(gnn_config, bq_client=mock_bq)
+        purchases = loader.load_user_purchases()
+
+        assert purchases == {
+            "a@test.com": {"SKU1", "SKU2"},
+            "b@test.com": {"SKU3"},
+        }
+        query = mock_bq.run_query.call_args.args[0]
+        assert "user_purchases" in query
+
+    def test_load_user_purchases_returns_empty_on_query_error(self, gnn_config, mock_bq):
+        mock_bq.run_query.side_effect = RuntimeError("table not found")
+
+        loader = GNNDataLoader(gnn_config, bq_client=mock_bq)
+        purchases = loader.load_user_purchases()
+
+        assert purchases == {}
+
+    def test_load_user_purchases_validates_required_columns(self, gnn_config, mock_bq):
+        mock_bq.run_query.return_value = pd.DataFrame({
+            "email_lower": ["a@test.com"],
+            "sku": ["SKU1"],
+        })
+
+        loader = GNNDataLoader(gnn_config, bq_client=mock_bq)
+
+        with pytest.raises(ValueError, match="missing required columns"):
+            loader.load_user_purchases()
