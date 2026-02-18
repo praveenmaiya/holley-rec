@@ -18,9 +18,29 @@ Send work from this session to OpenAI Codex for an independent peer review.
 ### Step 1: Identify What to Review
 
 Ask the user if not clear. The review target can be:
+- **Current context**: What we just discussed — extract from the live session transcript
 - **Conversation context**: Architecture description, design decision, analysis — summarize it from the conversation
 - **Files**: Specific source files the user points to
 - **Both**: Context + files for full picture
+
+### Step 1b: Extract Current Context (when user says "this", "what we discussed", "current context", etc.)
+
+When the user wants to review what was just discussed in the current session, extract it from the live transcript:
+
+```bash
+# Find the most recent session JSONL
+TRANSCRIPT=$(ls -t ~/.claude-personal/projects/-Users-praveenm-dev-auxia-holley-holley-rec/*.jsonl | head -1)
+
+# Extract last 30 user+assistant messages as readable conversation
+tail -200 "$TRANSCRIPT" \
+  | jq -r 'select(.type == "user" or .type == "assistant") | select(.message.content != null) | .message.content[] | select(.type == "text") | .text' \
+  2>/dev/null \
+  | tail -c 30000 > /tmp/codex_session_context.txt
+```
+
+Then include the extracted conversation in the context file under `## Conversation Transcript`.
+
+**Important**: Trim to the last ~30K chars to stay within Codex's context window. Focus on the most recent exchanges which are most relevant.
 
 ### Step 2: Write Context File
 
@@ -33,7 +53,10 @@ Write the review material to `/tmp/codex_review_context.md`:
 {brief description of the work}
 
 ## Context
-{architecture description, design rationale, constraints, or analysis from the conversation}
+{architecture description, design rationale, constraints, or analysis}
+
+## Conversation Transcript
+{if extracting from session: paste the extracted conversation here}
 
 ## Specific Concerns
 {user's specific doubts or areas to focus on, if any}
@@ -42,7 +65,7 @@ Write the review material to `/tmp/codex_review_context.md`:
 {if reviewing files, include the file contents here with paths as headers}
 ```
 
-Keep it focused — include only what's relevant, not the entire conversation.
+Keep it focused — include only what's relevant. When using transcript extraction, trim to the relevant portion of the conversation, not everything.
 
 ### Step 3: Execute Codex
 
@@ -108,6 +131,12 @@ User: `/codex-review src/gnn/scorer.py`
 User: `/codex-review should we use slot reservation or scoring boost for fitment?`
 - Write the tradeoffs discussed in conversation to context file
 - Ask Codex to weigh in
+
+### Current conversation
+User: `/codex-review what we just discussed` or `/codex-review this`
+- Extract last 30 messages from live session transcript
+- Write to context file with the user's concern
+- Send to Codex for fresh eyes on the discussion
 
 ### With specific concern
 User: `/codex-review the purchase exclusion logic - I'm worried about SKU normalization edge cases`
