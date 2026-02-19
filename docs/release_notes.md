@@ -1,13 +1,13 @@
 # Holley Recommendations - Release Notes
 
-## V5.18 (February 18, 2026)
+## V5.18 (February 19, 2026)
 
 **Dataset**: `auxia-reporting.temp_holley_v5_18`
 **Script**: `sql/recommendations/v5_18_fitment_recommendations.sql`
 
 ### Summary
 
-Fitment-only + popularity-only pipeline. All 4 slots are vehicle-specific fitment products. Scoring simplified to orders-based popularity with per-product 3-tier fallback (segment → make → global). No intent scoring, no universal candidates.
+Fitment-only + popularity-only pipeline. All 4 slots are vehicle-specific fitment products. Scoring simplified to orders-based popularity with per-product 3-tier fallback (segment → make → global). No intent scoring, no universal candidates. Multi-model peer review (Claude, ChatGPT, Codex, Gemini) applied for hardening.
 
 ### Why
 
@@ -25,7 +25,7 @@ Fitment-only + popularity-only pipeline. All 4 slots are vehicle-specific fitmen
 | `min_price` | $50 | **$50** | Unchanged |
 | `min_required_recs` | 4 | **3** | Include users with 3+ fitment parts |
 | `max_parttype_per_user` | 999 | **2** | Force category diversity |
-| User filter | All fitment users | **All fitment users** | Email consent not applied in v5.18 pipeline/QA gating |
+| User filter | All fitment users | **All fitment users** | Email consent deferred to QA layer |
 | Output columns | Standard | **+ engagement_tier, fitment_count** | Post-hoc analysis |
 
 ### NOT Changed
@@ -61,6 +61,21 @@ END
 - `rec4_*` columns may be NULL for users with only 3 fitment recs
 - `rec1_type` through `rec4_type` always 'fitment' (kept for backward compatibility)
 
+### Data Quality Hardening
+
+| Fix | Source | Impact |
+|-----|--------|--------|
+| Per-product popularity fallback | Claude | Eliminated 25,752 zero-score users (11.3%) by falling through tiers per-product instead of per-segment |
+| Latest-per-property attributes | Codex | Step 0 uses ROW_NUMBER by timestamp instead of MAX — prevents stale attribute values |
+| Variant-normalized purchase exclusion | Claude | Both events and import paths + exclusion join now apply `([0-9])[BRGP]$` normalization — fixed 2 variant leaks (RA003R vs RA003B) |
+| Strict valid-year filter | ChatGPT | SAFE_CAST check in Step 0 filters garbage year values |
+| Deterministic fitment candidate dedup | ChatGPT | DISTINCT on (year, make, model, sku) before scoring prevents duplicate fitment rows |
+| Defensive pivot | ChatGPT | Resolves duplicate user_id per email+YMM by picking best user (most recs, then highest score) |
+| Threshold variables | Codex | `min_users_with_v1` and `min_final_users` declared as variables instead of hardcoded |
+| Go/no-go evaluation script | Codex | New `v5_18_go_no_go_eval.sql` with severity-ranked checks (CRITICAL → HIGH → MEDIUM → INFO) |
+| Authoritative fitment QA check | ChatGPT | YMM × SKU join in qa_checks.sql validates every rec against fitment map |
+| Conditional investigation output | Gemini | Go/no-go only emits investigation aids on FAIL, keeping output clean |
+
 ### Validation Criteria
 
 - >= 400K users
@@ -69,7 +84,24 @@ END
 - No user has >2 of same PartType
 - fitment_count is 3 or 4
 - 0 universal products
-- Score floor > 0 (per-product fallback ensures all recs scored; max ~40)
+- Score floor > 0 (per-product fallback ensures all recs scored; max ~47)
+- 0 purchase exclusion violations (variant-normalized)
+- 0 fitment mismatches (every rec SKU verified against fitment map)
+
+### Latest Run (February 19, 2026)
+
+| Metric | Value |
+|--------|-------|
+| Users | 452,150 |
+| Score range | 1.39 – 47.45 |
+| Price range | $50.57 – $2,609.95 |
+| Duplicates | 0 |
+| Universals | 0 |
+| Fitment mismatches | 0 |
+| Purchase exclusion violations | 0 |
+| Pop source (rec1) | segment 56.8%, make 40.2%, global 3.0% |
+| Fitment count | 98.52% with 4 recs, 1.48% with 3 recs |
+| Go/no-go | **GO** (14/14 actionable checks PASS) |
 
 ---
 

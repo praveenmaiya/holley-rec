@@ -69,6 +69,12 @@ Note: `staged_events` still extracts all 5 event types (views, carts, orders) fo
 - Per-generation quality gate (>= 4 eligible parts) documented as intentional, stricter than min_required_recs (3)
 - Generation coverage QA monitor added (tracks total exclusions from all filters)
 - Per-product popularity fallback: if product has no data at assigned tier, falls through to next tier (eliminates zero-score recs)
+- Latest-per-property attributes: Step 0 uses `ROW_NUMBER() OVER (PARTITION BY user_id, property_name ORDER BY update_timestamp DESC)` instead of `MAX(IF(...))` — prevents stale attribute values from lexical MAX
+- Strict valid-year filter: `SAFE_CAST(v1_year AS INT64) IS NOT NULL` in Step 0 filters users with garbage year values
+- Deterministic fitment candidate dedup: `SELECT DISTINCT year, make, model, sku` before joining prices/images prevents duplicate rows from fitment table
+- Defensive pivot: when multiple `user_id` values share the same email+YMM, picks the user with the most recs (then highest total score, then deterministic user_id tie-break)
+- Variant-normalized purchase exclusion: both `from_events` and `from_import` apply `REGEXP_REPLACE(sku, r'([0-9])[BRGP]$', r'\1')`, and the exclusion join normalizes `fc.sku` too — prevents recommending color variants of already-purchased products (e.g., RA003R when user bought RA003B)
+- Threshold variables: `min_users_with_v1` and `min_final_users` declared as variables instead of hardcoded
 
 ## What Was Kept (Unchanged)
 
@@ -102,7 +108,26 @@ Note: `staged_events` still extracts all 5 event types (views, carts, orders) fo
 - Max 2 per PartType per user
 - fitment_count is 3 or 4
 - 0 universal products
-- Score floor >= 0 (popularity only; segment/make tiers can exceed 25)
+- Score floor > 0 (per-product fallback ensures all products scored; max ~47)
+- 0 purchase exclusion violations (variant-normalized)
+- 0 fitment mismatches (every rec SKU exists in fitment map for user's YMM)
+- Authoritative fitment check via YMM × SKU join against `vehicle_product_fitment_data`
+
+## Validation Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `sql/validation/qa_checks.sql` | Standard QA checks (duplicates, prices, ordering, diversity, fitment match) |
+| `sql/validation/v5_18_go_no_go_eval.sql` | Comprehensive go/no-go with severity-ranked checks (CRITICAL → HIGH → MEDIUM → INFO) |
+
+## Latest Run (February 19, 2026)
+
+- **Users**: 452,150
+- **Score range**: 1.39 – 47.45 (0 zero scores)
+- **Price range**: $50.57 – $2,609.95 (0 violations)
+- **Pop source (rec1)**: segment 56.8%, make 40.2%, global 3.0%
+- **Fitment count**: 98.52% with 4 recs, 1.48% with 3 recs
+- **Go/no-go**: all 14 actionable checks PASS
 
 ## Risk Mitigation
 
@@ -117,8 +142,11 @@ Note: `staged_events` still extracts all 5 event types (views, carts, orders) fo
 
 1. Dry run: `bq query --dry_run`
 2. Execute pipeline to `temp_holley_v5_18`
-3. Run updated `qa_checks.sql`
-4. Coverage comparison: v5.17 vs v5.18 user counts
-5. Fitment count distribution: expect 3 and 4
-6. Score distribution: verify > 0 min, no zero scores (per-product fallback ensures all products scored)
-7. No universals: verify 0 rows with product_type = 'universal'
+3. Run `sql/validation/qa_checks.sql` — standard QA checks
+4. Run `sql/validation/v5_18_go_no_go_eval.sql` — comprehensive go/no-go
+5. Coverage comparison: v5.17 vs v5.18 user counts
+6. Fitment count distribution: expect 3 and 4
+7. Score distribution: verify > 0 min, no zero scores (per-product fallback ensures all products scored)
+8. No universals: verify 0 rows with product_type = 'universal'
+9. Purchase exclusion: verify 0 variant-normalized violations
+10. Fitment match: verify every rec SKU exists in fitment map for user's YMM
