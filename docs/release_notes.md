@@ -22,7 +22,7 @@ Fitment-only + popularity-only pipeline. All 4 slots are vehicle-specific fitmen
 | Candidates | Fitment + Universal | **Fitment only** | Client feedback: no non-fitment parts |
 | Scoring | Intent + Popularity | **Popularity only** | Simplify to orders-based signal |
 | `pop_hist_start` | Apr 16, 2025 | **Jan 1, 2024** | 14 more months of history for better popularity signals |
-| `min_price` | $50 | **$25** | Expand fitment pool to compensate for no universals |
+| `min_price` | $50 | **$50** | Unchanged |
 | `min_required_recs` | 4 | **3** | Include users with 3+ fitment parts |
 | `max_parttype_per_user` | 999 | **2** | Force category diversity |
 | Output columns | Standard | **+ engagement_tier, fitment_count** | Post-hoc analysis |
@@ -62,7 +62,7 @@ END
 
 - >= 250K users (may be lower with fitment-only)
 - 0 duplicates
-- Prices >= $25
+- Prices >= $50
 - No user has >2 of same PartType
 - fitment_count is 3 or 4
 - 0 universal products

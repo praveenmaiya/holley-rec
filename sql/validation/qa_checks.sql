@@ -46,7 +46,7 @@ SELECT 'SCORE_RANGE', CONCAT(CAST((SELECT min_score FROM score_stats) AS STRING)
 UNION ALL
 SELECT 'AVG_SCORE', CAST((SELECT avg_score FROM score_stats) AS STRING), 'monitor trend vs previous run'
 UNION ALL
-SELECT 'PRICE_RANGE', CONCAT('$', CAST((SELECT min_price FROM price_stats) AS STRING), ' - $', CAST((SELECT max_price FROM price_stats) AS STRING)), '>=$25 required'
+SELECT 'PRICE_RANGE', CONCAT('$', CAST((SELECT min_price FROM price_stats) AS STRING), ' - $', CAST((SELECT max_price FROM price_stats) AS STRING)), '>=$50 required'
 UNION ALL
 SELECT 'DUPLICATES', CAST((SELECT duplicate_users FROM duplicate_check) AS STRING), '0 required';
 
@@ -114,17 +114,17 @@ FROM all_recommended_skus;
 
 
 -- ============================================================================
--- CHECK 4: Price Filter (>= $25)
+-- CHECK 4: Price Filter (>= $50)
 -- ============================================================================
--- Expected: min_price >= $25, violations = 0
+-- Expected: min_price >= $50, violations = 0
 -- Handles NULL rec4 for 3-rec users
 SELECT
   COUNT(*) as total_users,
   MIN(LEAST(rec1_price, rec2_price, rec3_price)) as min_price,
   GREATEST(MAX(rec1_price), MAX(rec2_price), MAX(rec3_price), COALESCE(MAX(rec4_price), 0)) as max_price,
   ROUND(AVG((rec1_price + rec2_price + rec3_price + COALESCE(rec4_price, 0)) / fitment_count), 2) as avg_price,
-  COUNTIF(rec1_price < 25 OR rec2_price < 25 OR rec3_price < 25) as below_25_violations_1_3,
-  COUNTIF(rec4_price IS NOT NULL AND rec4_price < 25) as below_25_violations_4
+  COUNTIF(rec1_price < 50 OR rec2_price < 50 OR rec3_price < 50) as below_50_violations_1_3,
+  COUNTIF(rec4_price IS NOT NULL AND rec4_price < 50) as below_50_violations_4
 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
 
 

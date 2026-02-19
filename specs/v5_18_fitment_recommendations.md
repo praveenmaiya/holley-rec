@@ -22,7 +22,7 @@ All 4 recommendation slots are vehicle-specific fitment products only, scored by
 | 1 | All 4 slots fitment-only (remove universals) | Slot logic |
 | 2 | Remove intent scoring (popularity-only) | Scoring |
 | 3 | Extend historical window to Jan 1, 2024 | Data prep |
-| 4 | Price floor $50 → $25 | Parameter |
+| 4 | Price floor $50 (unchanged) | Parameter |
 | 5 | Min 3 recs per user (was 4) | Selection |
 | 6 | Diversity cap 999 → 2 | Parameter |
 | 7 | final_score = popularity_score only | Scoring |
@@ -33,7 +33,7 @@ All 4 recommendation slots are vehicle-specific fitment products only, scored by
 pipeline_version = 'v5.18'
 target_dataset = 'temp_holley_v5_18'
 pop_hist_start = '2024-01-01'       -- was 2025-04-16 (14 more months of history)
-min_price = 25.0                    -- was 50.0
+min_price = 50.0                    -- unchanged from v5.17
 max_parttype_per_user = 2           -- was 999
 required_recs = 4                   -- max recs per user
 min_required_recs = 3               -- was 4 (min recs to include user)
@@ -93,7 +93,7 @@ Note: `staged_events` still extracts all 5 event types (views, carts, orders) fo
 
 - >= 250K users
 - 0 duplicates
-- Prices >= $25
+- Prices >= $50
 - Max 2 per PartType per user
 - fitment_count is 3 or 4
 - 0 universal products
@@ -103,7 +103,7 @@ Note: `staged_events` still extracts all 5 event types (views, carts, orders) fo
 
 | Risk | Mitigation |
 |------|-----------|
-| Audience shrinks (fewer users with 3+ fitment) | Price floor drop $50→$25 expands fitment pool |
+| Audience shrinks (fewer users with 3+ fitment) | Extended history (Jan 1, 2024) + min 3 recs expands coverage |
 | Same-vehicle users get identical recs | Acceptable; purchase exclusion provides differentiation |
 | Stale products in popularity | Jan 1, 2024 start + recent orders; auto parts buying patterns are stable |
 | 3-rec users have NULL rec4 | Downstream must handle NULL rec4 gracefully |

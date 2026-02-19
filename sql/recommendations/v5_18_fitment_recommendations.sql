@@ -5,7 +5,7 @@
 --   1. All 4 slots fitment-only (no universal candidates)
 --   2. Popularity-only scoring (remove intent score entirely)
 --   3. Remove intent scoring (staged_events still extracts all events for price/image)
---   4. Price floor lowered: $50 → $25 (expand fitment pool)
+--   4. Price floor: $50 (unchanged from v5.17)
 --   5. Minimum 3 recs per user (was 4), up to 4
 --   6. PartType diversity cap: 999 → 2 (force category diversity)
 --   7. Binary engagement tier (hot/cold) for analysis
@@ -56,7 +56,7 @@ DECLARE pop_hist_start   DATE DEFAULT DATE '2024-01-01';  -- V5.18: extended fro
 
 DECLARE purchase_window_days INT64 DEFAULT 365;
 DECLARE allow_price_fallback BOOL DEFAULT TRUE;
-DECLARE min_price FLOAT64 DEFAULT 25.0;                  -- V5.18: was 50.0
+DECLARE min_price FLOAT64 DEFAULT 50.0;
 DECLARE max_parttype_per_user INT64 DEFAULT 2;            -- V5.18: was 999
 DECLARE required_recs INT64 DEFAULT 4;                    -- Max recs per user
 DECLARE min_required_recs INT64 DEFAULT 3;                -- V5.18: min to include user (was 4)
@@ -268,7 +268,7 @@ WHERE rn = 1 AND image_url LIKE 'https://%%';
 """, tbl_sku_images, tbl_staged_events);
 
 -- -----------------------------------------------------------------------------------
--- STEP 1.3: ELIGIBLE PARTS (Fitment Only - V5.18: price floor $25)
+-- STEP 1.3: ELIGIBLE PARTS (Fitment Only - price floor $50)
 -- -----------------------------------------------------------------------------------
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
@@ -838,7 +838,7 @@ FROM %s
 """, tbl_final);
 
 -- Generation coverage monitor: how many vehicle generations survived all filters
--- (price >= $25, image, refurbished, service SKUs, commodity exclusion, AND >= 4 parts gate).
+-- (price >= $50, image, refurbished, service SKUs, commodity exclusion, AND >= 4 parts gate).
 -- Excluded = dropped by ANY filter, not just the >= 4 gate alone.
 -- Trend this metric across versions to detect catalog/price shrinkage.
 EXECUTE IMMEDIATE FORMAT("""
