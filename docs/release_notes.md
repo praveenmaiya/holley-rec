@@ -25,6 +25,7 @@ Fitment-only + popularity-only pipeline. All 4 slots are vehicle-specific fitmen
 | `min_price` | $50 | **$50** | Unchanged |
 | `min_required_recs` | 4 | **3** | Include users with 3+ fitment parts |
 | `max_parttype_per_user` | 999 | **2** | Force category diversity |
+| User filter | All fitment users | **Email-consented only** | Only build recs for reachable users |
 | Output columns | Standard | **+ engagement_tier, fitment_count** | Post-hoc analysis |
 
 ### NOT Changed
@@ -60,7 +61,7 @@ END
 
 ### Validation Criteria
 
-- >= 250K users (may be lower with fitment-only)
+- >= 200K users (email-consented fitment users; ~228K expected)
 - 0 duplicates
 - Prices >= $50
 - No user has >2 of same PartType

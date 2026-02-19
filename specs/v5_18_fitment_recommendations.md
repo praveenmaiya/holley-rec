@@ -26,6 +26,7 @@ All 4 recommendation slots are vehicle-specific fitment products only, scored by
 | 5 | Min 3 recs per user (was 4) | Selection |
 | 6 | Diversity cap 999 → 2 | Parameter |
 | 7 | final_score = popularity_score only | Scoring |
+| 8 | Email consent filter (consent LIKE '%email%') | User selection |
 
 ## Parameters
 
@@ -91,7 +92,7 @@ Note: `staged_events` still extracts all 5 event types (views, carts, orders) fo
 
 ## Validation Criteria
 
-- >= 250K users
+- >= 200K users (email-consented fitment users)
 - 0 duplicates
 - Prices >= $50
 - Max 2 per PartType per user
@@ -103,7 +104,7 @@ Note: `staged_events` still extracts all 5 event types (views, carts, orders) fo
 
 | Risk | Mitigation |
 |------|-----------|
-| Audience shrinks (fewer users with 3+ fitment) | Extended history (Jan 1, 2024) + min 3 recs expands coverage |
+| Audience shrinks (~228K with consent filter) | Only building recs for reachable users; no wasted compute |
 | Same-vehicle users get identical recs | Acceptable; purchase exclusion provides differentiation |
 | Stale products in popularity | Jan 1, 2024 start + recent orders; auto parts buying patterns are stable |
 | 3-rec users have NULL rec4 | Downstream must handle NULL rec4 gracefully |

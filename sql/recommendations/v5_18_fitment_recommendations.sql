@@ -9,6 +9,7 @@
 --   5. Minimum 3 recs per user (was 4), up to 4
 --   6. PartType diversity cap: 999 → 2 (force category diversity)
 --   7. Binary engagement tier (hot/cold) for analysis
+--   8. Email consent filter: only users with consent LIKE '%email%' (~258K of ~504K fitment users)
 --
 -- Why:
 --   - Client flagged universal (non-fitment) parts appearing for a golf cart
@@ -97,7 +98,7 @@ DECLARE step_end TIMESTAMP;
 DECLARE pipeline_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP();
 
 -- ====================================================================================
--- STEP 0: USERS WITH V1 VEHICLES (No change from v5.17)
+-- STEP 0: USERS WITH V1 VEHICLES + EMAIL CONSENT
 -- ====================================================================================
 SET step_start = CURRENT_TIMESTAMP();
 
@@ -117,12 +118,14 @@ FROM (
          MAX(IF(LOWER(p.property_name) = 'email', TRIM(p.string_value), NULL)) AS email_val,
          MAX(IF(LOWER(p.property_name) = 'v1_year', COALESCE(TRIM(p.string_value), CAST(p.long_value AS STRING)), NULL)) AS v1_year_str,
          MAX(IF(LOWER(p.property_name) = 'v1_make', COALESCE(UPPER(TRIM(p.string_value)), UPPER(CAST(p.long_value AS STRING))), NULL)) AS v1_make,
-         MAX(IF(LOWER(p.property_name) = 'v1_model', COALESCE(UPPER(TRIM(p.string_value)), UPPER(CAST(p.long_value AS STRING))), NULL)) AS v1_model
+         MAX(IF(LOWER(p.property_name) = 'v1_model', COALESCE(UPPER(TRIM(p.string_value)), UPPER(CAST(p.long_value AS STRING))), NULL)) AS v1_model,
+         MAX(IF(LOWER(p.property_name) = 'consent', TRIM(p.string_value), NULL)) AS consent_val
   FROM `auxia-gcp.company_1950.ingestion_unified_attributes_schema_incremental`, UNNEST(user_properties) AS p
-  WHERE LOWER(p.property_name) IN ('email','v1_year','v1_make','v1_model')
+  WHERE LOWER(p.property_name) IN ('email','v1_year','v1_make','v1_model','consent')
   GROUP BY user_id
 )
-WHERE email_val IS NOT NULL AND v1_year_str IS NOT NULL AND v1_make IS NOT NULL AND v1_model IS NOT NULL;
+WHERE email_val IS NOT NULL AND v1_year_str IS NOT NULL AND v1_make IS NOT NULL AND v1_model IS NOT NULL
+  AND consent_val LIKE '%%email%%';  -- Only users with email consent (["email"] or ["email","sms"])
 """, tbl_users);
 
 SET step_end = CURRENT_TIMESTAMP();
@@ -131,7 +134,7 @@ SELECT FORMAT('[Step 0] Users with V1 vehicles: %d seconds', TIMESTAMP_DIFF(step
 EXECUTE IMMEDIATE FORMAT("""
 SELECT 'users_with_v1_vehicles' AS table_name, COUNT(*) AS row_count,
   COUNT(DISTINCT CONCAT(v1_make, '/', v1_model)) AS unique_segments,
-  CASE WHEN COUNT(*) >= 400000 THEN 'OK' ELSE 'WARNING: Low user count' END AS status
+  CASE WHEN COUNT(*) >= 200000 THEN 'OK' ELSE 'WARNING: Low user count' END AS status
 FROM %s
 """, tbl_users);
 

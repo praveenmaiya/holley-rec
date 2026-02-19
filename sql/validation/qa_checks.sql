@@ -40,7 +40,7 @@ duplicate_check AS (
 SELECT
   'USERS' as metric,
   CAST((SELECT total_users FROM user_count) AS STRING) as value,
-  '>=250K expected' as expected
+  '>=200K expected' as expected
 UNION ALL
 SELECT 'SCORE_RANGE', CONCAT(CAST((SELECT min_score FROM score_stats) AS STRING), ' - ', CAST((SELECT max_score FROM score_stats) AS STRING)), '>=0 expected; segment/make tiers can exceed 25'
 UNION ALL
