@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from google.api_core.exceptions import NotFound
 
 from src.gnn.data_loader import GNNDataLoader
 
@@ -281,12 +282,20 @@ class TestGNNDataLoader:
         assert "user_purchases" in query
 
     def test_load_user_purchases_returns_empty_on_query_error(self, gnn_config, mock_bq):
-        mock_bq.run_query.side_effect = RuntimeError("table not found")
+        mock_bq.run_query.side_effect = NotFound("table not found")
 
         loader = GNNDataLoader(gnn_config, bq_client=mock_bq)
         purchases = loader.load_user_purchases()
 
         assert purchases == {}
+
+    def test_load_user_purchases_raises_on_non_notfound_errors(self, gnn_config, mock_bq):
+        mock_bq.run_query.side_effect = RuntimeError("permission denied")
+
+        loader = GNNDataLoader(gnn_config, bq_client=mock_bq)
+
+        with pytest.raises(RuntimeError, match="permission denied"):
+            loader.load_user_purchases()
 
     def test_load_user_purchases_validates_required_columns(self, gnn_config, mock_bq):
         mock_bq.run_query.return_value = pd.DataFrame({

@@ -312,3 +312,12 @@ class TestBuildFitmentIndex:
         )
         result = build_fitment_index(data)
         assert result[0] == []
+
+    def test_deterministic_sorted_output_order(self):
+        """Product list order is deterministic regardless of edge insertion order."""
+        data = self._make_hetero_data(
+            own_edges=[(0, 0), (0, 1)],
+            fits_edges=[(0, 9), (0, 1), (1, 7), (1, 3)],
+        )
+        result = build_fitment_index(data)
+        assert result[0] == [1, 3, 7, 9]

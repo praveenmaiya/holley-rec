@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from google.api_core.exceptions import NotFound
 
 from src.bq_client import BQClient
 
@@ -147,9 +148,9 @@ class GNNDataLoader:
             df = self.bq.run_query(
                 f"SELECT email_lower, base_sku FROM `{table_prefix}.user_purchases`"
             )
-        except Exception as exc:
+        except NotFound as exc:
             logger.warning(
-                "Failed to load user_purchases table; proceeding without purchase exclusion: %s",
+                "user_purchases table not found; proceeding without purchase exclusion: %s",
                 exc,
             )
             return {}

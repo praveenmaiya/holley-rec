@@ -76,13 +76,13 @@ def build_fitment_index(data: HeteroData) -> dict[int, list[int]]:
     The scorer uses its own ``_build_vehicle_groups()`` because it needs
     vehicle→user and vehicle→product mappings (different structure).
     """
-    result: dict[int, list[int]] = {}
+    user_products: dict[int, set[int]] = {}
 
     own_type = ("user", "owns", "vehicle")
     fits_type = ("vehicle", "rev_fits", "product")
 
     if own_type not in data.edge_types or fits_type not in data.edge_types:
-        return result
+        return {}
 
     own_ei = data[own_type].edge_index
     fits_ei = data[fits_type].edge_index
@@ -92,8 +92,7 @@ def build_fitment_index(data: HeteroData) -> dict[int, list[int]]:
         vehicle_products.setdefault(int(v), set()).add(int(p))
 
     for u, v in zip(own_ei[0].cpu().numpy(), own_ei[1].cpu().numpy()):
-        prods = vehicle_products.get(int(v), set())
-        result.setdefault(int(u), []).extend(prods)
+        user_products.setdefault(int(u), set()).update(vehicle_products.get(int(v), set()))
 
-    # Deduplicate while preserving insertion order
-    return {u: list(dict.fromkeys(prods)) for u, prods in result.items()}
+    # Deterministic ordering avoids run-to-run tie-break instability.
+    return {u: sorted(prods) for u, prods in user_products.items()}
