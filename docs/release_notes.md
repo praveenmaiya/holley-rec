@@ -25,7 +25,7 @@ Fitment-only + popularity-only pipeline. All 4 slots are vehicle-specific fitmen
 | `min_price` | $50 | **$50** | Unchanged |
 | `min_required_recs` | 4 | **3** | Include users with 3+ fitment parts |
 | `max_parttype_per_user` | 999 | **2** | Force category diversity |
-| User filter | All fitment users | **All fitment users** | Email consent deferred to QA layer |
+| User filter | All fitment users | **All fitment users** | Email consent not applied in v5.18 pipeline/QA gating |
 | Output columns | Standard | **+ engagement_tier, fitment_count** | Post-hoc analysis |
 
 ### NOT Changed

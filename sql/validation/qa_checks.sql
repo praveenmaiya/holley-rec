@@ -272,6 +272,60 @@ LEFT JOIN (
 
 
 -- ============================================================================
+-- CHECK 7f: Authoritative Fitment Match (YMM x SKU)
+-- ============================================================================
+-- Expected: mismatch_rows = 0, users_with_mismatch = 0
+WITH recs_long AS (
+  SELECT
+    email_lower,
+    SAFE_CAST(v1_year AS INT64) AS v1_year,
+    UPPER(v1_make) AS v1_make,
+    UPPER(v1_model) AS v1_model,
+    UPPER(rec_part_1) AS sku
+  FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  UNION ALL
+  SELECT email_lower, SAFE_CAST(v1_year AS INT64), UPPER(v1_make), UPPER(v1_model), UPPER(rec_part_2)
+  FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  UNION ALL
+  SELECT email_lower, SAFE_CAST(v1_year AS INT64), UPPER(v1_make), UPPER(v1_model), UPPER(rec_part_3)
+  FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  UNION ALL
+  SELECT email_lower, SAFE_CAST(v1_year AS INT64), UPPER(v1_make), UPPER(v1_model), UPPER(rec_part_4)
+  FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  WHERE rec_part_4 IS NOT NULL
+),
+fitment_map AS (
+  SELECT DISTINCT
+    SAFE_CAST(COALESCE(TRIM(fit.v1_year), CAST(fit.v1_year AS STRING)) AS INT64) AS v1_year,
+    UPPER(TRIM(fit.v1_make)) AS v1_make,
+    UPPER(TRIM(fit.v1_model)) AS v1_model,
+    UPPER(TRIM(prod.product_number)) AS sku
+  FROM `auxia-gcp.data_company_1950.vehicle_product_fitment_data` fit,
+       UNNEST(fit.products) prod
+  WHERE prod.product_number IS NOT NULL
+)
+SELECT
+  'fitment_match_check' AS check_name,
+  COUNT(*) AS total_rec_rows,
+  COUNTIF(f.sku IS NULL) AS mismatch_rows,
+  COUNT(DISTINCT IF(
+    f.sku IS NULL,
+    CONCAT(r.email_lower, '|', CAST(r.v1_year AS STRING), '|', r.v1_make, '|', r.v1_model),
+    NULL
+  )) AS users_with_mismatch,
+  CASE WHEN COUNTIF(f.sku IS NULL) = 0
+       THEN 'OK'
+       ELSE 'ERROR: Non-fitment recommendations found'
+  END AS status
+FROM recs_long r
+LEFT JOIN fitment_map f
+  ON r.v1_year = f.v1_year
+ AND r.v1_make = f.v1_make
+ AND r.v1_model = f.v1_model
+ AND r.sku = f.sku;
+
+
+-- ============================================================================
 -- CHECK 8: Score Distribution
 -- ============================================================================
 -- V5.18: Popularity-only scores (segment/make tiers can exceed 25)

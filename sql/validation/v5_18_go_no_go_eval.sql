@@ -16,6 +16,8 @@ DECLARE target_project STRING DEFAULT 'auxia-reporting';
 DECLARE target_dataset STRING DEFAULT 'temp_holley_v5_18';
 DECLARE min_price FLOAT64 DEFAULT 50.0;
 DECLARE purchase_window_days INT64 DEFAULT 365;
+DECLARE min_final_users INT64 DEFAULT 400000;
+DECLARE min_final_coverage_pct FLOAT64 DEFAULT 85.0;
 
 DECLARE final_table STRING DEFAULT FORMAT('`%s.%s.final_vehicle_recommendations`', target_project, target_dataset);
 DECLARE segment_table STRING DEFAULT FORMAT('`%s.%s.segment_popularity`', target_project, target_dataset);
@@ -117,6 +119,7 @@ SELECT DISTINCT
 FROM user_attrs_base
 WHERE email_lower IS NOT NULL
   AND v1_year IS NOT NULL
+  AND SAFE_CAST(v1_year AS INT64) IS NOT NULL
   AND v1_make IS NOT NULL
   AND v1_model IS NOT NULL;
 
@@ -126,7 +129,8 @@ SELECT DISTINCT
   SAFE_CAST(v1_year AS INT64) AS v1_year,
   UPPER(v1_make) AS v1_make,
   UPPER(v1_model) AS v1_model
-FROM recs_wide;
+FROM recs_wide
+WHERE SAFE_CAST(v1_year AS INT64) IS NOT NULL;
 
 -- -----------------------------------------------------------------------------
 -- Purchase exclusion audit (independent reconstruction)
@@ -362,6 +366,16 @@ FROM recs_wide;
 
 INSERT INTO go_no_go_checks
 SELECT
+  'final_user_count',
+  'CRITICAL',
+  CAST(COUNT(*) AS STRING),
+  FORMAT('>= %d', min_final_users),
+  CASE WHEN COUNT(*) >= min_final_users THEN 'PASS' ELSE 'FAIL' END,
+  'Final output row count gate'
+FROM recs_wide;
+
+INSERT INTO go_no_go_checks
+SELECT
   'score_ordering_violations',
   'MEDIUM',
   CAST(COUNTIF(NOT (
@@ -387,11 +401,11 @@ f AS (
 )
 SELECT
   'final_coverage_of_base_pct',
-  'INFO',
+  'HIGH',
   FORMAT('%.2f', SAFE_DIVIDE(f.final_users, b.base_users) * 100.0),
-  'monitor trend (higher is better)',
-  'INFO',
-  'Share of base fitment users receiving final recommendations'
+  FORMAT('>= %.2f', min_final_coverage_pct),
+  CASE WHEN SAFE_DIVIDE(f.final_users, b.base_users) * 100.0 >= min_final_coverage_pct THEN 'PASS' ELSE 'FAIL' END,
+  'Coverage gate to detect unexpected audience drop from base fitment users'
 FROM b, f;
 
 INSERT INTO go_no_go_checks
@@ -428,25 +442,28 @@ ORDER BY
 -- -----------------------------------------------------------------------------
 -- Investigation Aids (only relevant if a FAIL is present)
 -- -----------------------------------------------------------------------------
+IF EXISTS (SELECT 1 FROM go_no_go_checks WHERE status = 'FAIL') THEN
+  -- Top mismatches for triage
+  SELECT
+    r.email_lower,
+    r.v1_year,
+    r.v1_make,
+    r.v1_model,
+    r.rec_slot,
+    r.sku
+  FROM recs_long r
+  LEFT JOIN fitment_map f
+    ON r.v1_year = f.v1_year AND r.v1_make = f.v1_make AND r.v1_model = f.v1_model AND r.sku = f.sku
+  WHERE f.sku IS NULL
+  ORDER BY r.v1_make, r.v1_model, r.email_lower, r.rec_slot
+  LIMIT 200;
 
--- Top mismatches for triage
-SELECT
-  r.email_lower,
-  r.v1_year,
-  r.v1_make,
-  r.v1_model,
-  r.rec_slot,
-  r.sku
-FROM recs_long r
-LEFT JOIN fitment_map f
-  ON r.v1_year = f.v1_year AND r.v1_make = f.v1_make AND r.v1_model = f.v1_model AND r.sku = f.sku
-WHERE f.sku IS NULL
-ORDER BY r.v1_make, r.v1_model, r.email_lower, r.rec_slot
-LIMIT 200;
-
--- Golf-specific output sample for manual audit
-SELECT
-  *
-FROM recs_wide
-WHERE UPPER(v1_model) LIKE '%GOLF%'
-LIMIT 200;
+  -- Golf-specific output sample for manual audit
+  SELECT
+    *
+  FROM recs_wide
+  WHERE UPPER(v1_model) LIKE '%GOLF%'
+  LIMIT 200;
+ELSE
+  SELECT '[SKIP] Investigation aids not emitted because no FAIL checks were found.' AS log;
+END IF;

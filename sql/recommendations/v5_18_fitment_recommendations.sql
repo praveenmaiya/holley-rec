@@ -158,6 +158,7 @@ SELECT
 FROM pivoted
 WHERE email_lower IS NOT NULL
   AND v1_year IS NOT NULL
+  AND SAFE_CAST(v1_year AS INT64) IS NOT NULL
   AND v1_make IS NOT NULL
   AND v1_model IS NOT NULL;
 """, tbl_users);
@@ -316,18 +317,35 @@ WITH refurb AS (
   FROM `auxia-gcp.data_company_1950.import_items`
   WHERE PartNumber IS NOT NULL AND LOWER(Tags) LIKE '%%refurbished%%'
 ),
-fitment AS (
+fitment_catalog AS (
+  SELECT
+    UPPER(TRIM(PartNumber)) AS sku,
+    MAX(PartType) AS part_type
+  FROM `auxia-gcp.data_company_1950.import_items`
+  WHERE PartNumber IS NOT NULL
+  GROUP BY sku
+),
+fitment_raw AS (
   SELECT
     SAFE_CAST(COALESCE(TRIM(fit.v1_year), CAST(fit.v1_year AS STRING)) AS INT64) AS year,
     UPPER(TRIM(fit.v1_make)) AS make,
     UPPER(TRIM(fit.v1_model)) AS model,
-    UPPER(TRIM(prod.product_number)) AS sku,
-    COALESCE(cat.PartType, 'UNKNOWN') AS part_type
+    UPPER(TRIM(prod.product_number)) AS sku
   FROM `auxia-gcp.data_company_1950.vehicle_product_fitment_data` fit,
        UNNEST(fit.products) prod
-  LEFT JOIN `auxia-gcp.data_company_1950.import_items` cat
-    ON UPPER(TRIM(prod.product_number)) = UPPER(TRIM(cat.PartNumber))
   WHERE prod.product_number IS NOT NULL
+),
+fitment AS (
+  -- Deterministic 1-row-per-(year, make, model, sku) candidate set.
+  SELECT DISTINCT
+    fr.year,
+    fr.make,
+    fr.model,
+    fr.sku,
+    COALESCE(fc.part_type, 'UNKNOWN') AS part_type
+  FROM fitment_raw fr
+  LEFT JOIN fitment_catalog fc
+    ON fr.sku = fc.sku
 ),
 fitment_filtered AS (
   SELECT f.*, img.image_url, COALESCE(price.price, @min_price) AS price
@@ -799,9 +817,48 @@ USING required_recs AS required_recs, min_required_recs AS min_required_recs;
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY email_lower AS
-WITH order_users AS (
-  SELECT DISTINCT user_id FROM %s
+WITH order_emails AS (
+  SELECT DISTINCT u.email_lower
+  FROM %s se
+  JOIN %s u
+    ON se.user_id = u.user_id
   WHERE UPPER(event_name) IN ('PLACED ORDER', 'ORDERED PRODUCT', 'CONSUMER WEBSITE ORDER')
+),
+ranked_with_user_stats AS (
+  SELECT
+    r.*,
+    COUNT(*) OVER (PARTITION BY email_lower, v1_year, v1_make, v1_model, user_id) AS user_rec_count,
+    SUM(final_score) OVER (PARTITION BY email_lower, v1_year, v1_make, v1_model, user_id) AS user_total_score,
+    MAX(final_score) OVER (PARTITION BY email_lower, v1_year, v1_make, v1_model, user_id) AS user_top_score
+  FROM %s r
+),
+selected_user AS (
+  SELECT email_lower, v1_year, v1_make, v1_model, user_id
+  FROM (
+    SELECT
+      email_lower,
+      v1_year,
+      v1_make,
+      v1_model,
+      user_id,
+      ROW_NUMBER() OVER (
+        PARTITION BY email_lower, v1_year, v1_make, v1_model
+        ORDER BY user_rec_count DESC, user_total_score DESC, user_top_score DESC, user_id
+      ) AS pick_rn
+    FROM ranked_with_user_stats
+    GROUP BY email_lower, v1_year, v1_make, v1_model, user_id, user_rec_count, user_total_score, user_top_score
+  )
+  WHERE pick_rn = 1
+),
+ranked_selected AS (
+  SELECT r.*
+  FROM %s r
+  JOIN selected_user su
+    ON r.email_lower = su.email_lower
+   AND r.v1_year = su.v1_year
+   AND r.v1_make = su.v1_make
+   AND r.v1_model = su.v1_model
+   AND r.user_id = su.user_id
 )
 SELECT
   r.email_lower,
@@ -832,17 +889,18 @@ SELECT
   MAX(CASE WHEN rn = 4 THEN image_url END) AS rec4_image,
   MAX(CASE WHEN rn = 4 THEN product_type END) AS rec4_type,
   MAX(CASE WHEN rn = 4 THEN popularity_source END) AS rec4_pop_source,
-  -- V5.18: Engagement tier (binary: hot = has order since Sep 1, cold = no orders)
-  CASE WHEN MAX(ou.user_id) IS NOT NULL THEN 'hot' ELSE 'cold' END AS engagement_tier,
+  -- V5.18: Engagement tier (binary: hot = email has order since Sep 1, cold = no orders)
+  CASE WHEN MAX(oe.email_lower) IS NOT NULL THEN 'hot' ELSE 'cold' END AS engagement_tier,
   -- V5.18: Fitment count (= number of recs, 3 or 4)
   COUNT(*) AS fitment_count,
   CURRENT_TIMESTAMP() AS generated_at,
   @pipeline_version AS pipeline_version
-FROM %s r
-LEFT JOIN order_users ou ON r.user_id = ou.user_id
+FROM ranked_selected r
+LEFT JOIN order_emails oe
+  ON r.email_lower = oe.email_lower
 GROUP BY r.email_lower, r.v1_year, r.v1_make, r.v1_model
 HAVING COUNT(*) >= @min_required_recs;
-""", tbl_final, tbl_staged_events, tbl_ranked)
+""", tbl_final, tbl_staged_events, tbl_users, tbl_ranked, tbl_ranked)
 USING pipeline_version AS pipeline_version, min_required_recs AS min_required_recs;
 
 SET step_end = CURRENT_TIMESTAMP();
