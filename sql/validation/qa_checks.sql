@@ -1,6 +1,7 @@
 -- Holley Recommendations QA Validation Queries
 -- Run these checks after pipeline execution to validate data quality
 -- Default dataset: auxia-reporting.temp_holley_v5_18
+-- Note: email consent gating is intentionally not enforced in v5.18 pipeline output.
 
 -- ============================================================================
 -- QUICK HEALTH CHECK (run first)

@@ -9,7 +9,7 @@
 --   5. Minimum 3 recs per user (was 4), up to 4
 --   6. PartType diversity cap: 999 → 2 (force category diversity)
 --   7. Binary engagement tier (hot/cold) for analysis
---   8. Email consent filter: deferred to QA layer (all fitment users included)
+--   8. Email consent filter: intentionally not applied (all fitment users included)
 --
 -- Why:
 --   - Client flagged universal (non-fitment) parts appearing for a golf cart
@@ -62,6 +62,8 @@ DECLARE max_parttype_per_user INT64 DEFAULT 2;            -- V5.18: was 999
 DECLARE required_recs INT64 DEFAULT 4;                    -- Max recs per user
 DECLARE min_required_recs INT64 DEFAULT 3;                -- V5.18: min to include user (was 4)
 DECLARE require_purchase_signal BOOL DEFAULT TRUE;         -- Enforce purchase-backed recommendations
+DECLARE min_users_with_v1 INT64 DEFAULT 400000;           -- Monitoring threshold
+DECLARE min_final_users INT64 DEFAULT 400000;             -- Keep aligned with QA expectation
 
 -- V5.17: 3-tier popularity configuration (unchanged)
 DECLARE min_segment_orders INT64 DEFAULT 2;
@@ -105,25 +107,59 @@ SET step_start = CURRENT_TIMESTAMP();
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY user_id AS
-SELECT DISTINCT
-  user_id,
-  LOWER(email_val) AS email_lower,
-  UPPER(email_val) AS email_upper,
-  v1_year_str AS v1_year,
-  SAFE_CAST(v1_year_str AS INT64) AS v1_year_int,
-  v1_make,
-  v1_model
-FROM (
-  SELECT user_id,
-         MAX(IF(LOWER(p.property_name) = 'email', TRIM(p.string_value), NULL)) AS email_val,
-         MAX(IF(LOWER(p.property_name) = 'v1_year', COALESCE(TRIM(p.string_value), CAST(p.long_value AS STRING)), NULL)) AS v1_year_str,
-         MAX(IF(LOWER(p.property_name) = 'v1_make', COALESCE(UPPER(TRIM(p.string_value)), UPPER(CAST(p.long_value AS STRING))), NULL)) AS v1_make,
-         MAX(IF(LOWER(p.property_name) = 'v1_model', COALESCE(UPPER(TRIM(p.string_value)), UPPER(CAST(p.long_value AS STRING))), NULL)) AS v1_model
-  FROM `auxia-gcp.company_1950.ingestion_unified_attributes_schema_incremental`, UNNEST(user_properties) AS p
-  WHERE LOWER(p.property_name) IN ('email','v1_year','v1_make','v1_model')
+WITH attr_ranked AS (
+  SELECT
+    t.user_id,
+    LOWER(p.property_name) AS property_name,
+    CASE
+      WHEN LOWER(p.property_name) = 'email'
+        THEN LOWER(TRIM(p.string_value))
+      WHEN LOWER(p.property_name) = 'v1_year'
+        THEN TRIM(COALESCE(p.string_value, CAST(p.long_value AS STRING)))
+      WHEN LOWER(p.property_name) = 'v1_make'
+        THEN UPPER(TRIM(COALESCE(p.string_value, CAST(p.long_value AS STRING))))
+      WHEN LOWER(p.property_name) = 'v1_model'
+        THEN UPPER(TRIM(COALESCE(p.string_value, CAST(p.long_value AS STRING))))
+      ELSE NULL
+    END AS property_value,
+    ROW_NUMBER() OVER (
+      PARTITION BY t.user_id, LOWER(p.property_name)
+      ORDER BY t.update_timestamp DESC, t.auxia_insertion_timestamp DESC
+    ) AS rn
+  FROM `auxia-gcp.company_1950.ingestion_unified_attributes_schema_incremental` t,
+       UNNEST(t.user_properties) AS p
+  WHERE LOWER(p.property_name) IN ('email', 'v1_year', 'v1_make', 'v1_model')
+),
+latest_props AS (
+  SELECT user_id, property_name, property_value
+  FROM attr_ranked
+  WHERE rn = 1
+    AND property_value IS NOT NULL
+    AND property_value != ''
+),
+pivoted AS (
+  SELECT
+    user_id,
+    MAX(IF(property_name = 'email', property_value, NULL)) AS email_lower,
+    MAX(IF(property_name = 'v1_year', property_value, NULL)) AS v1_year,
+    MAX(IF(property_name = 'v1_make', property_value, NULL)) AS v1_make,
+    MAX(IF(property_name = 'v1_model', property_value, NULL)) AS v1_model
+  FROM latest_props
   GROUP BY user_id
 )
-WHERE email_val IS NOT NULL AND v1_year_str IS NOT NULL AND v1_make IS NOT NULL AND v1_model IS NOT NULL;
+SELECT
+  user_id,
+  email_lower,
+  UPPER(email_lower) AS email_upper,
+  v1_year,
+  SAFE_CAST(v1_year AS INT64) AS v1_year_int,
+  v1_make,
+  v1_model
+FROM pivoted
+WHERE email_lower IS NOT NULL
+  AND v1_year IS NOT NULL
+  AND v1_make IS NOT NULL
+  AND v1_model IS NOT NULL;
 """, tbl_users);
 
 SET step_end = CURRENT_TIMESTAMP();
@@ -132,9 +168,10 @@ SELECT FORMAT('[Step 0] Users with V1 vehicles: %d seconds', TIMESTAMP_DIFF(step
 EXECUTE IMMEDIATE FORMAT("""
 SELECT 'users_with_v1_vehicles' AS table_name, COUNT(*) AS row_count,
   COUNT(DISTINCT CONCAT(v1_make, '/', v1_model)) AS unique_segments,
-  CASE WHEN COUNT(*) >= 400000 THEN 'OK' ELSE 'WARNING: Low user count' END AS status
+  CASE WHEN COUNT(*) >= @min_users_with_v1 THEN 'OK' ELSE 'WARNING: Low user count' END AS status
 FROM %s
-""", tbl_users);
+""", tbl_users)
+USING min_users_with_v1 AS min_users_with_v1;
 
 -- ====================================================================================
 -- STEP 1: STAGED EVENTS (All events for price/image; orders used for scoring)
@@ -816,9 +853,10 @@ SELECT FORMAT('[Step 3] Recommendations (exclusion + dedup + diversity + pivot):
 EXECUTE IMMEDIATE FORMAT("""
 SELECT 'final_vehicle_recommendations' AS table_name,
   COUNT(*) AS unique_users,
-  CASE WHEN COUNT(*) >= 200000 THEN 'OK' ELSE 'WARNING: Low final user count' END AS status
+  CASE WHEN COUNT(*) >= @min_final_users THEN 'OK' ELSE 'WARNING: Low final user count' END AS status
 FROM %s
-""", tbl_final);
+""", tbl_final)
+USING min_final_users AS min_final_users;
 
 -- Fitment count distribution (expect 3 or 4)
 EXECUTE IMMEDIATE FORMAT("""
