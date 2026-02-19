@@ -26,7 +26,8 @@ All 4 recommendation slots are vehicle-specific fitment products only, scored by
 | 5 | Min 3 recs per user (was 4) | Selection |
 | 6 | Diversity cap 999 → 2 | Parameter |
 | 7 | final_score = popularity_score only | Scoring |
-| 8 | Email consent filter (consent LIKE '%email%') | User selection |
+| 8 | Email consent filter (latest consent LIKE '%email%') | User selection |
+| 9 | Per-product popularity fallback (not per-segment) | Scoring |
 
 ## Parameters
 
@@ -43,11 +44,14 @@ min_required_recs = 3               -- was 4 (min recs to include user)
 ## Scoring
 
 ```sql
--- No intent. Popularity only with 3-tier fallback.
+-- No intent. Popularity only with per-product 3-tier fallback.
+-- Falls through to next tier if product has no data at current tier.
 final_score = CASE
-  WHEN segment_orders >= 5 THEN segment_popularity_score  -- weight 10.0
-  WHEN make_orders >= 20   THEN make_popularity_score      -- weight 8.0
-  ELSE global_popularity_score                             -- weight 2.0
+  WHEN segment_orders >= 5 AND segment_popularity_score IS NOT NULL
+    THEN segment_popularity_score                            -- weight 10.0
+  WHEN make_orders >= 20 AND make_popularity_score IS NOT NULL
+    THEN make_popularity_score                               -- weight 8.0
+  ELSE COALESCE(global_popularity_score, 0)                  -- weight 2.0
 END
 ```
 
@@ -65,6 +69,8 @@ Note: `staged_events` still extracts all 5 event types (views, carts, orders) fo
 - ORDER_DATE year prefilter: replaced individual LIKE patterns with `REGEXP_EXTRACT(ORDER_DATE, r'\\b(20[0-9]{2})\\b') BETWEEN min_prefilter_year AND max_prefilter_year` in dynamic SQL — contiguous year range from pop_hist_start to current year, no gaps possible
 - Per-generation quality gate (>= 4 eligible parts) documented as intentional, stricter than min_required_recs (3)
 - Generation coverage QA monitor added (tracks total exclusions from all filters)
+- Email consent: uses latest consent state via `ROW_NUMBER() OVER (ORDER BY update_timestamp DESC)` — not MAX
+- Per-product popularity fallback: if product has no data at assigned tier, falls through to next tier (eliminates zero-score recs)
 
 ## What Was Kept (Unchanged)
 
@@ -104,7 +110,7 @@ Note: `staged_events` still extracts all 5 event types (views, carts, orders) fo
 
 | Risk | Mitigation |
 |------|-----------|
-| Audience shrinks (~228K with consent filter) | Only building recs for reachable users; no wasted compute |
+| Audience shrinks (~229K with consent filter) | Only building recs for reachable users; no wasted compute |
 | Same-vehicle users get identical recs | Acceptable; purchase exclusion provides differentiation |
 | Stale products in popularity | Jan 1, 2024 start + recent orders; auto parts buying patterns are stable |
 | 3-rec users have NULL rec4 | Downstream must handle NULL rec4 gracefully |
@@ -116,5 +122,5 @@ Note: `staged_events` still extracts all 5 event types (views, carts, orders) fo
 3. Run updated `qa_checks.sql`
 4. Coverage comparison: v5.17 vs v5.18 user counts
 5. Fitment count distribution: expect 3 and 4
-6. Score distribution: verify 0–25 range (no intent boost)
+6. Score distribution: verify > 0 min, no zero scores (per-product fallback ensures all products scored)
 7. No universals: verify 0 rows with product_type = 'universal'

@@ -7,7 +7,7 @@
 
 ### Summary
 
-Fitment-only + popularity-only pipeline. All 4 slots are vehicle-specific fitment products. Scoring simplified to orders-based popularity with 3-tier fallback (segment → make → global). No intent scoring, no universal candidates.
+Fitment-only + popularity-only pipeline for email-consented users. All 4 slots are vehicle-specific fitment products. Scoring simplified to orders-based popularity with per-product 3-tier fallback (segment → make → global). No intent scoring, no universal candidates. ~229K users (down from 502K in v5.17 due to consent filter + fitment-only).
 
 ### Why
 
@@ -39,11 +39,13 @@ Fitment-only + popularity-only pipeline. All 4 slots are vehicle-specific fitmen
 ### Scoring
 
 ```sql
--- Popularity-only, no intent
+-- Popularity-only, per-product fallback (falls through if product has no data at tier)
 final_score = CASE
-  WHEN segment_orders >= 5 THEN segment_popularity_score  -- weight 10.0
-  WHEN make_orders >= 20   THEN make_popularity_score      -- weight 8.0
-  ELSE global_popularity_score                             -- weight 2.0
+  WHEN segment_orders >= 5 AND segment_popularity_score IS NOT NULL
+    THEN segment_popularity_score                            -- weight 10.0
+  WHEN make_orders >= 20 AND make_popularity_score IS NOT NULL
+    THEN make_popularity_score                               -- weight 8.0
+  ELSE COALESCE(global_popularity_score, 0)                  -- weight 2.0
 END
 ```
 
@@ -61,13 +63,13 @@ END
 
 ### Validation Criteria
 
-- >= 200K users (email-consented fitment users; ~228K expected)
+- >= 200K users (email-consented fitment users; ~229K actual)
 - 0 duplicates
 - Prices >= $50
 - No user has >2 of same PartType
 - fitment_count is 3 or 4
 - 0 universal products
-- Score floor >= 0 (popularity only; segment/make tiers can exceed 25)
+- Score floor > 0 (per-product fallback ensures all recs scored; max ~40)
 
 ---
 
