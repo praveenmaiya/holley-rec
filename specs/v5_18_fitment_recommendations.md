@@ -26,8 +26,7 @@ All 4 recommendation slots are vehicle-specific fitment products only, scored by
 | 5 | Min 3 recs per user (was 4) | Selection |
 | 6 | Diversity cap 999 → 2 | Parameter |
 | 7 | final_score = popularity_score only | Scoring |
-| 8 | Email consent filter (latest consent LIKE '%email%') | User selection |
-| 9 | Per-product popularity fallback (not per-segment) | Scoring |
+| 8 | Per-product popularity fallback (not per-segment) | Scoring |
 
 ## Parameters
 
@@ -69,7 +68,6 @@ Note: `staged_events` still extracts all 5 event types (views, carts, orders) fo
 - ORDER_DATE year prefilter: replaced individual LIKE patterns with `REGEXP_EXTRACT(ORDER_DATE, r'\\b(20[0-9]{2})\\b') BETWEEN min_prefilter_year AND max_prefilter_year` in dynamic SQL — contiguous year range from pop_hist_start to current year, no gaps possible
 - Per-generation quality gate (>= 4 eligible parts) documented as intentional, stricter than min_required_recs (3)
 - Generation coverage QA monitor added (tracks total exclusions from all filters)
-- Email consent: uses latest consent state via `ROW_NUMBER() OVER (ORDER BY update_timestamp DESC)` — not MAX
 - Per-product popularity fallback: if product has no data at assigned tier, falls through to next tier (eliminates zero-score recs)
 
 ## What Was Kept (Unchanged)
@@ -98,7 +96,7 @@ Note: `staged_events` still extracts all 5 event types (views, carts, orders) fo
 
 ## Validation Criteria
 
-- >= 200K users (email-consented fitment users)
+- >= 400K users
 - 0 duplicates
 - Prices >= $50
 - Max 2 per PartType per user
@@ -110,7 +108,7 @@ Note: `staged_events` still extracts all 5 event types (views, carts, orders) fo
 
 | Risk | Mitigation |
 |------|-----------|
-| Audience shrinks (~229K with consent filter) | Only building recs for reachable users; no wasted compute |
+| Audience shrinks (fitment-only, no universals) | Extended history (Jan 1, 2024) + min 3 recs expands coverage |
 | Same-vehicle users get identical recs | Acceptable; purchase exclusion provides differentiation |
 | Stale products in popularity | Jan 1, 2024 start + recent orders; auto parts buying patterns are stable |
 | 3-rec users have NULL rec4 | Downstream must handle NULL rec4 gracefully |

@@ -9,7 +9,7 @@
 --   5. Minimum 3 recs per user (was 4), up to 4
 --   6. PartType diversity cap: 999 → 2 (force category diversity)
 --   7. Binary engagement tier (hot/cold) for analysis
---   8. Email consent filter: only users with consent LIKE '%email%' (~258K of ~504K fitment users)
+--   8. Email consent filter: deferred to QA layer (all fitment users included)
 --
 -- Why:
 --   - Client flagged universal (non-fitment) parts appearing for a golf cart
@@ -98,58 +98,32 @@ DECLARE step_end TIMESTAMP;
 DECLARE pipeline_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP();
 
 -- ====================================================================================
--- STEP 0: USERS WITH V1 VEHICLES + EMAIL CONSENT
+-- STEP 0: USERS WITH V1 VEHICLES
 -- ====================================================================================
 SET step_start = CURRENT_TIMESTAMP();
 
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY user_id AS
-WITH base_attrs AS (
-  SELECT
-    t.user_id,
-    MAX(IF(LOWER(p.property_name) = 'email', TRIM(p.string_value), NULL)) AS email_val,
-    MAX(IF(LOWER(p.property_name) = 'v1_year', COALESCE(TRIM(p.string_value), CAST(p.long_value AS STRING)), NULL)) AS v1_year_str,
-    MAX(IF(LOWER(p.property_name) = 'v1_make', COALESCE(UPPER(TRIM(p.string_value)), UPPER(CAST(p.long_value AS STRING))), NULL)) AS v1_make,
-    MAX(IF(LOWER(p.property_name) = 'v1_model', COALESCE(UPPER(TRIM(p.string_value)), UPPER(CAST(p.long_value AS STRING))), NULL)) AS v1_model
-  FROM `auxia-gcp.company_1950.ingestion_unified_attributes_schema_incremental` t, UNNEST(t.user_properties) AS p
-  WHERE LOWER(p.property_name) IN ('email','v1_year','v1_make','v1_model')
-  GROUP BY t.user_id
-),
-latest_consent AS (
-  SELECT
-    user_id,
-    LOWER(TRIM(consent_val)) AS consent_val
-  FROM (
-    SELECT
-      t.user_id,
-      p.string_value AS consent_val,
-      ROW_NUMBER() OVER (
-        PARTITION BY t.user_id
-        ORDER BY t.update_timestamp DESC, t.auxia_insertion_timestamp DESC
-      ) AS rn
-    FROM `auxia-gcp.company_1950.ingestion_unified_attributes_schema_incremental` t, UNNEST(t.user_properties) AS p
-    WHERE LOWER(p.property_name) = 'consent'
-      AND p.string_value IS NOT NULL
-  )
-  WHERE rn = 1
-)
 SELECT DISTINCT
-  b.user_id,
-  LOWER(b.email_val) AS email_lower,
-  UPPER(b.email_val) AS email_upper,
-  b.v1_year_str AS v1_year,
-  SAFE_CAST(b.v1_year_str AS INT64) AS v1_year_int,
-  b.v1_make,
-  b.v1_model
-FROM base_attrs b
-JOIN latest_consent c
-  ON b.user_id = c.user_id
-WHERE b.email_val IS NOT NULL
-  AND b.v1_year_str IS NOT NULL
-  AND b.v1_make IS NOT NULL
-  AND b.v1_model IS NOT NULL
-  AND c.consent_val LIKE '%%email%%';  -- Latest consent must include email (["email"] or ["email","sms"])
+  user_id,
+  LOWER(email_val) AS email_lower,
+  UPPER(email_val) AS email_upper,
+  v1_year_str AS v1_year,
+  SAFE_CAST(v1_year_str AS INT64) AS v1_year_int,
+  v1_make,
+  v1_model
+FROM (
+  SELECT user_id,
+         MAX(IF(LOWER(p.property_name) = 'email', TRIM(p.string_value), NULL)) AS email_val,
+         MAX(IF(LOWER(p.property_name) = 'v1_year', COALESCE(TRIM(p.string_value), CAST(p.long_value AS STRING)), NULL)) AS v1_year_str,
+         MAX(IF(LOWER(p.property_name) = 'v1_make', COALESCE(UPPER(TRIM(p.string_value)), UPPER(CAST(p.long_value AS STRING))), NULL)) AS v1_make,
+         MAX(IF(LOWER(p.property_name) = 'v1_model', COALESCE(UPPER(TRIM(p.string_value)), UPPER(CAST(p.long_value AS STRING))), NULL)) AS v1_model
+  FROM `auxia-gcp.company_1950.ingestion_unified_attributes_schema_incremental`, UNNEST(user_properties) AS p
+  WHERE LOWER(p.property_name) IN ('email','v1_year','v1_make','v1_model')
+  GROUP BY user_id
+)
+WHERE email_val IS NOT NULL AND v1_year_str IS NOT NULL AND v1_make IS NOT NULL AND v1_model IS NOT NULL;
 """, tbl_users);
 
 SET step_end = CURRENT_TIMESTAMP();
@@ -158,7 +132,7 @@ SELECT FORMAT('[Step 0] Users with V1 vehicles: %d seconds', TIMESTAMP_DIFF(step
 EXECUTE IMMEDIATE FORMAT("""
 SELECT 'users_with_v1_vehicles' AS table_name, COUNT(*) AS row_count,
   COUNT(DISTINCT CONCAT(v1_make, '/', v1_model)) AS unique_segments,
-  CASE WHEN COUNT(*) >= 200000 THEN 'OK' ELSE 'WARNING: Low user count' END AS status
+  CASE WHEN COUNT(*) >= 400000 THEN 'OK' ELSE 'WARNING: Low user count' END AS status
 FROM %s
 """, tbl_users);
 
