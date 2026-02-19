@@ -626,7 +626,8 @@ WITH bounds AS (
          @intent_window_end AS end_date
 ),
 from_events AS (
-  SELECT DISTINCT user_id, sku
+  SELECT DISTINCT user_id,
+    REGEXP_REPLACE(sku, r'([0-9])[BRGP]$', r'\\1') AS sku  -- Normalize variants
   FROM %s, bounds b
   WHERE sku IS NOT NULL AND user_id IS NOT NULL
     AND UPPER(event_name) IN ('PLACED ORDER','ORDERED PRODUCT','CONSUMER WEBSITE ORDER')
@@ -720,8 +721,9 @@ LEFT JOIN %s glob ON fc.sku = glob.sku
 -- Join tier totals for fallback logic
 LEFT JOIN segment_totals st ON fc.v1_make = st.v1_make AND fc.v1_model = st.v1_model
 LEFT JOIN make_totals mt ON fc.v1_make = mt.v1_make
--- Purchase exclusion
-LEFT JOIN %s purch ON fc.user_id = purch.user_id AND fc.sku = purch.sku
+-- Purchase exclusion (normalize variants so RA003R matches purchased RA003B)
+LEFT JOIN %s purch ON fc.user_id = purch.user_id
+  AND REGEXP_REPLACE(fc.sku, r'([0-9])[BRGP]$', r'\\1') = purch.sku
 WHERE purch.sku IS NULL
   AND fc.sku IS NOT NULL
   AND fc.image_url IS NOT NULL
