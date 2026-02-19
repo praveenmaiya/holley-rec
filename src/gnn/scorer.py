@@ -385,7 +385,7 @@ class GNNScorer:
 
         row["fitment_count"] = fitment_count
         row["model_version"] = self.config.get("output", {}).get(
-            "model_version", "gnn_option_a_v1"
+            "model_version", "v6.0"
         )
 
         return row

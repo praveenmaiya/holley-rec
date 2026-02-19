@@ -58,7 +58,7 @@ def _qa_row(
         "rec4_price": rec4_price,
         "rec4_score": rec4_score,
         "fitment_count": 1,
-        "model_version": "gnn_option_a_v1",
+        "model_version": "v6.0",
     }
 
 

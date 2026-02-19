@@ -53,3 +53,4 @@ eval:
 output:
   shadow_table: "auxia-reporting.temp_holley_gnn.gnn_recommendations"
   model_gcs: "gs://auxia-models/holley/gnn/"
+  model_version: "v6.0"
