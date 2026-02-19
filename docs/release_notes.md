@@ -1,62 +1,72 @@
 # Holley Recommendations - Release Notes
 
-## V5.18 (January 30, 2026)
+## V5.18 (February 18, 2026)
 
 **Dataset**: `auxia-reporting.temp_holley_v5_18`
-**Script**: `sql/recommendations/v5_18_revenue_ab_test.sql`
+**Script**: `sql/recommendations/v5_18_fitment_recommendations.sql`
 
 ### Summary
 
-Revenue A/B test pipeline with reserved slot allocation (2 fitment + 2 universal) and engagement tier classification for post-hoc analysis.
+Fitment-only + popularity-only pipeline. All 4 slots are vehicle-specific fitment products. Scoring simplified to orders-based popularity with 3-tier fallback (segment → make → global). No intent scoring, no universal candidates.
 
-### Purpose
+### Why
 
-One-time email blast A/B test to prove personalized recs drive revenue. We control audience selection. Contract depends on it.
+- Client flagged universal (non-fitment) parts appearing for a golf cart
+- Supervisor directed simplifying scoring to orders-only popularity
+- A/B test on v5.17 showed positive uplift and conversion
 
 ### Changes from V5.17
 
 | Parameter | V5.17 | V5.18 | Why |
 |-----------|-------|-------|-----|
-| `max_parttype_per_user` | 999 | **2** | Force category diversity (28.5% concentration in 3 PartTypes) |
-| `max_universal_products` | 500 | **1000** | Broader discovery, more categories covered |
-| Slot allocation | Best 4 overall | **2 fitment + 2 universal** | Guarantee vehicle-specific + popular items |
-| Output columns | Standard | **+ engagement_tier, fitment_count** | Post-hoc revenue analysis by segment |
+| Candidates | Fitment + Universal | **Fitment only** | Client feedback: no non-fitment parts |
+| Scoring | Intent + Popularity | **Popularity only** | Simplify to orders-based signal |
+| `pop_hist_start` | Apr 16, 2025 | **Jan 1, 2024** | 14 more months of history for better popularity signals |
+| `min_price` | $50 | **$25** | Expand fitment pool to compensate for no universals |
+| `min_required_recs` | 4 | **3** | Include users with 3+ fitment parts |
+| `max_parttype_per_user` | 999 | **2** | Force category diversity |
+| Output columns | Standard | **+ engagement_tier, fitment_count** | Post-hoc analysis |
 
 ### NOT Changed
 
-- Intent weights (20/10/2) -- removing was -34%
-- 3-tier popularity fallback -- v5.17's best feature
+- 3-tier popularity fallback (v5.17's best feature)
 - Sep 1 boundary, variant dedup, commodity exclusions
-- $50 price floor
+- staged_events extracts all event types (views/carts/orders for price/image data)
+- Popularity built from VFU user orders only (not all 3M users)
+- Production deployment workflow
 
-### Reserved Slot Logic
+### Scoring
 
-1. Rank fitment candidates per user -> take top 2
-2. Rank universal candidates per user -> take top 2
-3. Backfill if either pool has <2 (e.g., 1 fitment -> 3 universal)
-4. Final 4 ordered: fitment first, then universal
-
-### New Tables
-
-| Table | Purpose |
-|-------|---------|
-| `audience_qualified` | Users classified by engagement tier (hot/warm/cold) |
+```sql
+-- Popularity-only, no intent
+final_score = CASE
+  WHEN segment_orders >= 5 THEN segment_popularity_score  -- weight 10.0
+  WHEN make_orders >= 20   THEN make_popularity_score      -- weight 8.0
+  ELSE global_popularity_score                             -- weight 2.0
+END
+```
 
 ### New Columns in Output
 
 | Column | Values |
 |--------|--------|
-| `engagement_tier` | 'hot', 'warm', or 'cold' |
-| `fitment_count` | 0-4 (count of fitment recs per user) |
+| `engagement_tier` | 'hot' (has order event since Sep 1) or 'cold' (no recent orders) |
+| `fitment_count` | 3 or 4 (number of recs per user) |
+
+### Schema Notes
+
+- `rec4_*` columns may be NULL for users with only 3 fitment recs
+- `rec1_type` through `rec4_type` always 'fitment' (kept for backward compatibility)
 
 ### Validation Criteria
 
-- >= 400K users
+- >= 250K users (may be lower with fitment-only)
 - 0 duplicates
-- Prices >= $50
+- Prices >= $25
 - No user has >2 of same PartType
-- Most users have fitment_count = 2
-- Category coverage >= 400 unique PartTypes (up from 322)
+- fitment_count is 3 or 4
+- 0 universal products
+- Score floor >= 0 (popularity only; segment/make tiers can exceed 25)
 
 ---
 

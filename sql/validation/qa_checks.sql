@@ -1,6 +1,6 @@
 -- Holley Recommendations QA Validation Queries
 -- Run these checks after pipeline execution to validate data quality
--- Dataset: auxia-reporting.temp_holley_v5_7 (or temp_holley_v5_18 for v5.18)
+-- Default dataset: auxia-reporting.temp_holley_v5_18
 
 -- ============================================================================
 -- QUICK HEALTH CHECK (run first)
@@ -10,41 +10,43 @@
 WITH
 user_count AS (
   SELECT COUNT(*) as total_users
-  FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
 ),
 score_stats AS (
   SELECT
     MIN(rec1_score) as min_score,
     MAX(rec1_score) as max_score,
     ROUND(AVG(rec1_score), 2) as avg_score
-  FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
 ),
 price_stats AS (
   SELECT
-    MIN(LEAST(rec1_price, rec2_price, rec3_price, rec4_price)) as min_price,
-    MAX(GREATEST(rec1_price, rec2_price, rec3_price, rec4_price)) as max_price,
-    ROUND(AVG((rec1_price + rec2_price + rec3_price + rec4_price) / 4), 2) as avg_price
-  FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+    MIN(LEAST(rec1_price, rec2_price, rec3_price)) as min_price,
+    MAX(GREATEST(rec1_price, rec2_price, rec3_price, COALESCE(rec4_price, 0))) as max_price,
+    ROUND(AVG((rec1_price + rec2_price + rec3_price + COALESCE(rec4_price, 0)) / fitment_count), 2) as avg_price
+  FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
 ),
 duplicate_check AS (
   SELECT
     COUNTIF(
       rec_part_1 = rec_part_2 OR rec_part_1 = rec_part_3 OR
-      rec_part_1 = rec_part_4 OR rec_part_2 = rec_part_3 OR
-      rec_part_2 = rec_part_4 OR rec_part_3 = rec_part_4
+      rec_part_2 = rec_part_3 OR
+      (rec_part_4 IS NOT NULL AND (
+        rec_part_1 = rec_part_4 OR rec_part_2 = rec_part_4 OR rec_part_3 = rec_part_4
+      ))
     ) as duplicate_users
-  FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
 )
 SELECT
   'USERS' as metric,
   CAST((SELECT total_users FROM user_count) AS STRING) as value,
-  '~450K expected' as expected
+  '>=250K expected' as expected
 UNION ALL
-SELECT 'SCORE_RANGE', CONCAT(CAST((SELECT min_score FROM score_stats) AS STRING), ' - ', CAST((SELECT max_score FROM score_stats) AS STRING)), '0-90 expected'
+SELECT 'SCORE_RANGE', CONCAT(CAST((SELECT min_score FROM score_stats) AS STRING), ' - ', CAST((SELECT max_score FROM score_stats) AS STRING)), '>=0 expected; segment/make tiers can exceed 25'
 UNION ALL
-SELECT 'AVG_SCORE', CAST((SELECT avg_score FROM score_stats) AS STRING), '10-25 expected'
+SELECT 'AVG_SCORE', CAST((SELECT avg_score FROM score_stats) AS STRING), 'monitor trend vs previous run'
 UNION ALL
-SELECT 'PRICE_RANGE', CONCAT('$', CAST((SELECT min_price FROM price_stats) AS STRING), ' - $', CAST((SELECT max_price FROM price_stats) AS STRING)), '>=$50 required'
+SELECT 'PRICE_RANGE', CONCAT('$', CAST((SELECT min_price FROM price_stats) AS STRING), ' - $', CAST((SELECT max_price FROM price_stats) AS STRING)), '>=$25 required'
 UNION ALL
 SELECT 'DUPLICATES', CAST((SELECT duplicate_users FROM duplicate_check) AS STRING), '0 required';
 
@@ -53,13 +55,16 @@ SELECT 'DUPLICATES', CAST((SELECT duplicate_users FROM duplicate_check) AS STRIN
 -- CHECK 1: No Duplicate SKUs per User
 -- ============================================================================
 -- Expected: 0 users with duplicate recommendations
+-- Handles NULL rec4 for 3-rec users
 SELECT
   COUNTIF(
     rec_part_1 = rec_part_2 OR rec_part_1 = rec_part_3 OR
-    rec_part_1 = rec_part_4 OR rec_part_2 = rec_part_3 OR
-    rec_part_2 = rec_part_4 OR rec_part_3 = rec_part_4
+    rec_part_2 = rec_part_3 OR
+    (rec_part_4 IS NOT NULL AND (
+      rec_part_1 = rec_part_4 OR rec_part_2 = rec_part_4 OR rec_part_3 = rec_part_4
+    ))
   ) as users_with_duplicates
-FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`;
+FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
 
 
 -- ============================================================================
@@ -67,17 +72,17 @@ FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`;
 -- ============================================================================
 -- Expected: 0 refurbished SKUs
 WITH all_recommended_skus AS (
-  SELECT rec_part_1 as sku FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  SELECT rec_part_1 as sku FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT rec_part_2 FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  SELECT rec_part_2 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT rec_part_3 FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  SELECT rec_part_3 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT rec_part_4 FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  SELECT rec_part_4 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations` WHERE rec_part_4 IS NOT NULL
 )
 SELECT
   COUNT(*) as total_skus,
-  COUNTIF(it.Tags = 'Refurbished') as refurbished_count
+  COUNTIF(LOWER(it.Tags) LIKE '%refurbished%') as refurbished_count
 FROM all_recommended_skus rs
 LEFT JOIN (
   SELECT UPPER(TRIM(PartNumber)) as PartNumber, MAX(Tags) as Tags
@@ -91,13 +96,13 @@ LEFT JOIN (
 -- ============================================================================
 -- Expected: All counts = 0
 WITH all_recommended_skus AS (
-  SELECT rec_part_1 as sku FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  SELECT rec_part_1 as sku FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT rec_part_2 FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  SELECT rec_part_2 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT rec_part_3 FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  SELECT rec_part_3 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT rec_part_4 FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  SELECT rec_part_4 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations` WHERE rec_part_4 IS NOT NULL
 )
 SELECT
   COUNTIF(sku LIKE 'EXT-%') as ext_count,
@@ -109,30 +114,33 @@ FROM all_recommended_skus;
 
 
 -- ============================================================================
--- CHECK 4: Price Filter (>= $50)
+-- CHECK 4: Price Filter (>= $25)
 -- ============================================================================
--- Expected: min_price >= $50, violations = 0
+-- Expected: min_price >= $25, violations = 0
+-- Handles NULL rec4 for 3-rec users
 SELECT
   COUNT(*) as total_users,
-  MIN(LEAST(rec1_price, rec2_price, rec3_price, rec4_price)) as min_price,
-  MAX(GREATEST(rec1_price, rec2_price, rec3_price, rec4_price)) as max_price,
-  ROUND(AVG((rec1_price + rec2_price + rec3_price + rec4_price) / 4), 2) as avg_price,
-  COUNTIF(rec1_price < 50 OR rec2_price < 50 OR rec3_price < 50 OR rec4_price < 50) as below_50_violations
-FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`;
+  MIN(LEAST(rec1_price, rec2_price, rec3_price)) as min_price,
+  GREATEST(MAX(rec1_price), MAX(rec2_price), MAX(rec3_price), COALESCE(MAX(rec4_price), 0)) as max_price,
+  ROUND(AVG((rec1_price + rec2_price + rec3_price + COALESCE(rec4_price, 0)) / fitment_count), 2) as avg_price,
+  COUNTIF(rec1_price < 25 OR rec2_price < 25 OR rec3_price < 25) as below_25_violations_1_3,
+  COUNTIF(rec4_price IS NOT NULL AND rec4_price < 25) as below_25_violations_4
+FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
 
 
 -- ============================================================================
 -- CHECK 5: HTTPS Images Only
 -- ============================================================================
--- Expected: https_pct = 100%, null_count = 0
+-- Expected: https_pct = 100%, null_count = 0 for recs 1-3
+-- rec4 images may be NULL for 3-rec users
 WITH all_images AS (
-  SELECT rec1_image as image_url FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  SELECT rec1_image as image_url FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION ALL
-  SELECT rec2_image FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  SELECT rec2_image FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION ALL
-  SELECT rec3_image FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  SELECT rec3_image FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION ALL
-  SELECT rec4_image FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  SELECT rec4_image FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations` WHERE rec4_image IS NOT NULL
 )
 SELECT
   COUNT(*) as total_images,
@@ -148,18 +156,20 @@ FROM all_images;
 -- CHECK 6: Score Ordering (Monotonic Decrease)
 -- ============================================================================
 -- Expected: correct_ordering_pct = 100%
+-- Handles NULL rec4 for 3-rec users
 SELECT
   COUNT(*) as total_users,
   COUNTIF(
     rec1_score >= rec2_score AND
     rec2_score >= rec3_score AND
-    rec3_score >= rec4_score
+    (rec4_score IS NULL OR rec3_score >= rec4_score)
   ) as correctly_ordered,
   ROUND(
-    COUNTIF(rec1_score >= rec2_score AND rec2_score >= rec3_score AND rec3_score >= rec4_score)
+    COUNTIF(rec1_score >= rec2_score AND rec2_score >= rec3_score AND
+            (rec4_score IS NULL OR rec3_score >= rec4_score))
     * 100.0 / COUNT(*), 2
   ) as correct_ordering_pct
-FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`;
+FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
 
 
 -- ============================================================================
@@ -167,13 +177,13 @@ FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`;
 -- ============================================================================
 -- Expected: max_same_parttype <= 2
 WITH user_recs_long AS (
-  SELECT email_lower, rec_part_1 as sku FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  SELECT email_lower, rec_part_1 as sku FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION ALL
-  SELECT email_lower, rec_part_2 FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  SELECT email_lower, rec_part_2 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION ALL
-  SELECT email_lower, rec_part_3 FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  SELECT email_lower, rec_part_3 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION ALL
-  SELECT email_lower, rec_part_4 FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`
+  SELECT email_lower, rec_part_4 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations` WHERE rec_part_4 IS NOT NULL
 ),
 user_parttype_counts AS (
   SELECT
@@ -195,37 +205,49 @@ FROM user_parttype_counts;
 
 
 -- ============================================================================
--- CHECK 7b: V5.18 Reserved Slot Distribution
+-- CHECK 7b: Fitment Count Distribution
 -- ============================================================================
--- Expected: Most users have fitment_count = 2
--- Only run against v5.18 dataset
+-- Expected: fitment_count is 3 or 4 for all users
 SELECT
-  'v5.18_reserved_slots' AS check_name,
-  COUNTIF(fitment_count = 0) AS fitment_0,
-  COUNTIF(fitment_count = 1) AS fitment_1,
-  COUNTIF(fitment_count = 2) AS fitment_2,
-  COUNTIF(fitment_count = 3) AS fitment_3,
-  COUNTIF(fitment_count = 4) AS fitment_4,
+  'fitment_count_distribution' AS check_name,
+  COUNTIF(fitment_count = 3) AS with_3_recs,
+  COUNTIF(fitment_count = 4) AS with_4_recs,
+  COUNTIF(fitment_count NOT IN (3, 4)) AS unexpected_count,
   ROUND(AVG(fitment_count), 2) AS avg_fitment_count
 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
 
 
 -- ============================================================================
--- CHECK 7c: V5.18 Engagement Tier Distribution
+-- CHECK 7c: Engagement Tier Distribution
 -- ============================================================================
 SELECT
-  'v5.18_engagement_tiers' AS check_name,
+  'engagement_tier_distribution' AS check_name,
   COUNTIF(engagement_tier = 'hot') AS hot_users,
-  COUNTIF(engagement_tier = 'warm') AS warm_users,
   COUNTIF(engagement_tier = 'cold') AS cold_users,
   COUNT(*) AS total_users
 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
 
 
 -- ============================================================================
--- CHECK 7d: V5.18 Category Coverage
+-- CHECK 7d: No Universal Products (fitment-only pipeline)
 -- ============================================================================
--- Expected: >= 400 unique PartTypes (up from 322 in v5.17)
+-- Expected: 0 universals across all slots
+SELECT
+  'no_universals_check' AS check_name,
+  COUNTIF(rec1_type = 'universal') AS rec1_universal,
+  COUNTIF(rec2_type = 'universal') AS rec2_universal,
+  COUNTIF(rec3_type = 'universal') AS rec3_universal,
+  COUNTIF(rec4_type IS NOT NULL AND rec4_type = 'universal') AS rec4_universal,
+  CASE WHEN COUNTIF(rec1_type = 'universal') + COUNTIF(rec2_type = 'universal') +
+            COUNTIF(rec3_type = 'universal') + COUNTIF(rec4_type IS NOT NULL AND rec4_type = 'universal') = 0
+       THEN 'OK' ELSE 'ERROR: Universal products found' END AS status
+FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
+
+
+-- ============================================================================
+-- CHECK 7e: Category Coverage
+-- ============================================================================
+-- Expected: >= 400 unique PartTypes
 WITH all_skus AS (
   SELECT rec_part_1 AS sku FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION DISTINCT
@@ -233,7 +255,7 @@ WITH all_skus AS (
   UNION DISTINCT
   SELECT rec_part_3 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT rec_part_4 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT rec_part_4 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations` WHERE rec_part_4 IS NOT NULL
 )
 SELECT
   COUNT(DISTINCT cat.PartType) AS unique_part_types,
@@ -251,13 +273,29 @@ LEFT JOIN (
 -- ============================================================================
 -- CHECK 8: Score Distribution
 -- ============================================================================
--- Info: Review score distribution for anomalies
+-- V5.18: Popularity-only scores (segment/make tiers can exceed 25)
 SELECT
   MIN(rec1_score) as min_score,
   MAX(rec1_score) as max_score,
   ROUND(AVG(rec1_score), 2) as avg_score,
   APPROX_QUANTILES(rec1_score, 100)[OFFSET(50)] as median_score,
+  APPROX_QUANTILES(rec1_score, 100)[OFFSET(95)] as p95_score,
   COUNTIF(rec1_score = 0) as zero_scores,
-  COUNTIF(rec1_score > 0 AND rec1_score <= 12) as popularity_only,
-  COUNTIF(rec1_score > 12) as has_intent
-FROM `auxia-reporting.temp_holley_v5_7.final_vehicle_recommendations`;
+  COUNTIF(rec1_score < 0) as negative_scores,
+  COUNTIF(rec1_score > 25) as above_25_monitor,
+  COUNTIF(rec1_score > 40) as above_40_monitor
+FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
+
+
+-- ============================================================================
+-- CHECK 9: NULL rec4 Check (acceptable for 3-rec users)
+-- ============================================================================
+SELECT
+  'null_rec4_check' AS check_name,
+  COUNTIF(rec_part_4 IS NULL) AS users_with_null_rec4,
+  COUNTIF(rec_part_4 IS NOT NULL) AS users_with_rec4,
+  COUNT(*) AS total_users,
+  ROUND(COUNTIF(rec_part_4 IS NULL) * 100.0 / COUNT(*), 2) AS pct_null_rec4,
+  -- Verify NULL rec4 only for 3-rec users
+  COUNTIF(rec_part_4 IS NULL AND fitment_count != 3) AS unexpected_null_rec4
+FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
