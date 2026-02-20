@@ -2,7 +2,10 @@
 -- V5.18 Go/No-Go Evaluation (Post-Run)
 -- ------------------------------------------------------------------------------------
 -- Purpose:
---   Make release decisions with strict fitment and quality safety gates.
+--   Release safety gate for QA signoff. Confirms recommendations are:
+--   - Correct vehicle fitment
+--   - Purchase-backed (popularity source is valid)
+--   - Quality ranked and policy compliant
 --
 -- Usage:
 --   bq query --use_legacy_sql=false < sql/validation/v5_18_go_no_go_eval.sql
@@ -10,6 +13,45 @@
 -- Notes:
 --   - Run AFTER v5.18 pipeline completes.
 --   - This script assumes intermediate popularity tables exist in target_dataset.
+--   - Output is a severity-ranked checklist (CRITICAL/HIGH/MEDIUM/INFO).
+--
+-- QA Criteria Covered (use-case checklist):
+--   1) Fitment Safety (no "Golf drama" class issues)
+--      - Every YMM x SKU must exist in authoritative fitment map.
+--      - Both row-level and user-level mismatch counts must be zero.
+--      - Explicit Golf-model mismatch guardrail is included.
+--
+--   2) Fitment-Only Policy
+--      - Universal products must be zero in final output.
+--
+--   3) Commercial Constraints
+--      - Price floor must hold for every recommended slot (min_price variable).
+--
+--   4) Purchase Exclusion Protection
+--      - Reconstructs last-365-day purchases from import_orders + order events.
+--      - Uses normalized SKU matching for variant-safe exclusion checks.
+--
+--   5) Scoring / Source Integrity
+--      - pop_source cannot be none/blank.
+--      - pop_source labels (segment/make/global) must match supporting tables.
+--
+--   6) Ranking Quality
+--      - No duplicate SKUs within a user row.
+--      - Diversity cap: no more than 2 SKUs per PartType.
+--      - fitment_count must be only 3 or 4.
+--      - Score ordering must be monotonic across ranked slots.
+--
+--   7) Delivery Coverage
+--      - Final user count gate (volume floor).
+--      - Final coverage vs base fitment universe gate (drop detection).
+--
+--   8) Debug/Triage Readiness
+--      - Investigation samples are emitted only when any FAIL is present.
+--
+-- Data Windows Used:
+--   - Historical orders: Jan 1, 2024 to Aug 31, 2025 (from pipeline outputs)
+--   - Recent events/orders: Sep 1, 2025 to current run date
+--   - Purchase exclusion window: trailing 365 days
 -- ====================================================================================
 
 DECLARE target_project STRING DEFAULT 'auxia-reporting';
