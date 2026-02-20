@@ -44,8 +44,8 @@ DECLARE prod_table_name STRING DEFAULT 'final_vehicle_recommendations';
 -- Deployment flag (set to FALSE for backtest, TRUE for production)
 DECLARE deploy_to_production BOOL DEFAULT FALSE;
 
--- Backup suffix (current date)
-DECLARE backup_suffix STRING DEFAULT FORMAT_DATE('%Y_%m_%d', CURRENT_DATE());
+-- Backup suffix (timestamp to prevent same-day overwrites)
+DECLARE backup_suffix STRING DEFAULT FORMAT_TIMESTAMP('%Y_%m_%d_%H%M%S', CURRENT_TIMESTAMP());
 
 -- Intent window: Fixed Sep 1 boundary to current date
 DECLARE intent_window_end   DATE DEFAULT CURRENT_DATE();

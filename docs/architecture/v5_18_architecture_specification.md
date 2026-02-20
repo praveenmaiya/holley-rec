@@ -64,7 +64,7 @@ The pipeline combines two temporally disjoint data sources with a fixed boundary
 | **Historical Orders** | `auxia-gcp.data_company_1950.import_orders` | Bulk order history for popularity scoring and purchase exclusion | Jan 1, 2024 → Aug 31, 2025 |
 | **Fitment Map** | `auxia-gcp.data_company_1950.vehicle_product_fitment_data` | Authoritative vehicle-to-product compatibility | Static (refreshed by client) |
 | **Product Catalog** | `auxia-gcp.data_company_1950.import_items` | PartType taxonomy, tags (refurbished detection) | Static |
-| **Product Tags** | `auxia-gcp.data_company_1950.import_items_tags` | Refurbished tag detection | Static |
+| **Product Tags** | `auxia-gcp.data_company_1950.import_items` (Tags column) | Refurbished tag detection via `Tags LIKE '%refurbished%'` | Static |
 
 ### 2.2 Why September 1 Is Fixed
 
@@ -169,7 +169,7 @@ This is the most filter-heavy step. A product must survive ALL of the following 
 | **Service SKUs** | `SKU LIKE 'EXT-%'`, `'GIFT-%'`, `'WARRANTY-%'`, `'SERVICE-%'`, `'PREAUTH-%'` | Non-merchandise items |
 | **Commodity PartTypes** | `Gasket`, `Decal`, `Key`, `Washer`, `Clamp` | Low-consideration commodity parts |
 | **Bolt Exception** | `LIKE '%Bolt%'` excluded UNLESS exactly `'Engine Cylinder Head Bolt'` or `'Engine Bolt Kit'` | High-value engine bolts are allowed |
-| **Cap Exception** | `LIKE '%Cap%'` excluded UNLESS `'Wheel Hub Cap'`, `'Wheel Cap Set'`; explicitly blocks `'Distributor Cap'` | Nuanced taxonomy handling |
+| **Cap Exception** | `LIKE '%Cap%'` excluded UNLESS `'Distributor Cap'`, `'Wheel Hub Cap'`, or `'Wheel Cap Set'` | Distributor Caps are performance parts; Wheel Caps are high-value |
 | **Unknown Taxonomy** | `PartType = 'UNKNOWN' AND price < $3,000` | Only ultra-high-ticket unknowns (crate engines) are allowed |
 | **Image Required** | `image_url IS NOT NULL AND LIKE 'https://%'` | Email template requires valid HTTPS images |
 | **Fitment Dedup** | `SELECT DISTINCT year, make, model, sku` before joining | Prevents duplicate rows from fitment table producing inflated candidate sets |
@@ -334,7 +334,7 @@ This guarantees exactly **one row per `(email, year, make, model)`** in the fina
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `email_lower` | STRING | User email (lowercase, trimmed) — primary key |
+| `email_lower` | STRING | User email (lowercase, trimmed) — composite key with YMM |
 | `v1_year` | STRING | Vehicle year |
 | `v1_make` | STRING | Vehicle make (uppercased) |
 | `v1_model` | STRING | Vehicle model (uppercased) |
@@ -372,12 +372,12 @@ This guarantees exactly **one row per `(email, year, make, model)`** in the fina
 5. Review results → all checks must PASS
 6. Set deploy_to_production = TRUE
 7. Re-run pipeline → copies final table to production
-8. Timestamped backup created: final_vehicle_recommendations_2026_02_19
+8. Timestamped backup created: final_vehicle_recommendations_2026_02_19_143022
 ```
 
 **Zero-Downtime Deployment**: Production writes use `CREATE OR REPLACE TABLE ... COPY`, which is atomic. The old table is replaced in a single operation — no `DROP` + `CREATE` gap where the table doesn't exist.
 
-**Immutable Snapshots**: Every deployment creates `final_vehicle_recommendations_YYYY_MM_DD` for rollback capability and A/B test backtesting.
+**Timestamped Snapshots**: Every deployment creates `final_vehicle_recommendations_YYYY_MM_DD_HHMMSS` for rollback capability and A/B test backtesting. The timestamp suffix (down to seconds) ensures multiple same-day deploys never overwrite prior snapshots.
 
 ---
 
@@ -406,22 +406,23 @@ Every materialization step emits a check query:
 
 A separate 14-check severity-ranked evaluation script run after pipeline completion:
 
-| # | Check | Severity | Pass Criteria |
-|---|-------|----------|---------------|
-| 1 | Fitment mismatch (YMM × SKU vs authoritative fitment map) | CRITICAL | 0 row-level mismatches |
-| 2 | Fitment mismatch (user-level) | CRITICAL | 0 users with any mismatch |
-| 3 | Golf-segment mismatch guardrail | CRITICAL | 0 golf-model mismatches |
-| 4 | Price floor violations | CRITICAL | 0 violations |
-| 5 | Universal products in output | CRITICAL | 0 rows |
-| 6 | Purchase exclusion violations (variant-normalized) | CRITICAL | 0 violations |
-| 7 | Pop source integrity (`none`/blank) | HIGH | 0 invalid sources |
-| 8 | Pop source label validation vs backing tables | HIGH | 0 mismatches |
-| 9 | Duplicate users | HIGH | 0 duplicates |
-| 10 | Diversity cap violations | HIGH | 0 violations (max 2 per PartType) |
-| 11 | Invalid fitment count | MEDIUM | Only 3 or 4 |
-| 12 | Score monotonicity across slots | MEDIUM | ~100% monotonic |
-| 13 | Final user coverage volume | MEDIUM | >= 400,000 |
-| 14 | Coverage vs base fitment universe | MEDIUM | >= threshold % |
+| # | Check Name | Severity | Pass Criteria |
+|---|------------|----------|---------------|
+| 1 | `fitment_mismatch_rows` — YMM × SKU vs authoritative fitment map | CRITICAL | 0 row-level mismatches |
+| 2 | `users_with_any_fitment_mismatch` — user-level fitment check | CRITICAL | 0 users with any mismatch |
+| 3 | `golf_segment_mismatch_rows` — golf-model guardrail | CRITICAL | 0 golf-model mismatches |
+| 4 | `universal_recommendation_rows` — universal products in output | CRITICAL | 0 rows |
+| 5 | `price_floor_violations` — price below threshold | CRITICAL | 0 violations |
+| 6 | `final_user_count` — output volume gate | CRITICAL | >= 400,000 |
+| 7 | `purchase_exclusion_violations` — variant-normalized | HIGH | 0 violations |
+| 8 | `duplicate_users` — duplicate SKUs within a user row | HIGH | 0 duplicate SKUs |
+| 9 | `diversity_cap_violations` — max 2 per PartType | HIGH | 0 violations |
+| 10 | `popularity_source_none_rows` — pop source integrity | HIGH | 0 invalid sources |
+| 11 | `popularity_source_join_mismatches` — label vs backing table | HIGH | 0 mismatches |
+| 12 | `fitment_count_outside_3_or_4` — invalid rec counts | HIGH | Only 3 or 4 |
+| 13 | `final_coverage_of_base_pct` — coverage vs base universe | HIGH | >= threshold % |
+| 14 | `score_ordering_violations` — monotonicity across slots | MEDIUM | 0 violations |
+| — | `users_with_4_recommendations_pct` — 4-rec percentage | INFO | Monitoring only |
 
 **Investigation Readiness**: Sample rows are emitted only when any check FAILs (conditional output), providing immediate triage data without cluttering successful runs.
 
@@ -535,6 +536,8 @@ All tunable parameters are declared as BigQuery variables at the top of the scri
 | **Popularity-only** | No individual browsing behavior considered | GNN two-tower architecture learns user-product affinity beyond popularity |
 | **Static fitment map** | Stale if client doesn't refresh | Monitoring: generation coverage QA tracks exclusion rate |
 | **September 1 boundary** | Fixed temporal split may need adjustment as time passes | Review boundary quarterly |
+| **Popularity count inflation** | Recent popularity uses `COUNT(*)` across order event types without order-level dedup; historical popularity joins by email which can multiply counts if one email maps to multiple user_ids | Add order-level dedup key to recent counts; deduplicate email→user_id mapping in historical join |
+| **Image-dependent coverage** | Products require a recent event with an image URL to be eligible; valid fitment SKUs with no recent image events are silently dropped from the candidate pool | Consider supplementing with catalog-sourced images from `import_items` |
 
 ---
 
