@@ -328,7 +328,7 @@ JOIN purchased_365d_all p
 
 INSERT INTO go_no_go_checks
 SELECT
-  'duplicate_users',
+  'duplicate_skus_per_user',
   'HIGH',
   CAST(COUNTIF(
     rec_part_1 = rec_part_2 OR rec_part_1 = rec_part_3 OR

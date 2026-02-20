@@ -377,7 +377,7 @@ This guarantees exactly **one row per `(email, year, make, model)`** in the fina
 
 **Zero-Downtime Deployment**: Production writes use `CREATE OR REPLACE TABLE ... COPY`, which is atomic. The old table is replaced in a single operation — no `DROP` + `CREATE` gap where the table doesn't exist.
 
-**Timestamped Snapshots**: Every deployment creates `final_vehicle_recommendations_YYYY_MM_DD_HHMMSS` for rollback capability and A/B test backtesting. The timestamp suffix (down to seconds) ensures multiple same-day deploys never overwrite prior snapshots.
+**Timestamped Snapshots**: Every deployment creates `final_vehicle_recommendations_YYYY_MM_DD_HHMMSS` for rollback capability and A/B test backtesting. The second-granularity timestamp suffix makes same-day overwrites unlikely in practice, though concurrent deploys within the same second would still collide due to `CREATE OR REPLACE`.
 
 ---
 
@@ -415,7 +415,7 @@ A separate 14-check severity-ranked evaluation script run after pipeline complet
 | 5 | `price_floor_violations` — price below threshold | CRITICAL | 0 violations |
 | 6 | `final_user_count` — output volume gate | CRITICAL | >= 400,000 |
 | 7 | `purchase_exclusion_violations` — variant-normalized | HIGH | 0 violations |
-| 8 | `duplicate_users` — duplicate SKUs within a user row | HIGH | 0 duplicate SKUs |
+| 8 | `duplicate_skus_per_user` — duplicate SKUs within a user row | HIGH | 0 duplicate SKUs |
 | 9 | `diversity_cap_violations` — max 2 per PartType | HIGH | 0 violations |
 | 10 | `popularity_source_none_rows` — pop source integrity | HIGH | 0 invalid sources |
 | 11 | `popularity_source_join_mismatches` — label vs backing table | HIGH | 0 mismatches |
