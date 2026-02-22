@@ -127,7 +127,8 @@ class TestGNNEvaluator:
 
         assert len(result) <= 4
 
-    def test_business_rules_reserve_fitment_then_universal(self, eval_setup):
+    def test_business_rules_fitment_only_no_universals(self, eval_setup):
+        """v5.18: all 4 slots filled from fitment, no universal products selected."""
         from src.gnn.evaluator import GNNEvaluator
 
         model, data, masks, id_map, nodes, test_df, sql_df, config = eval_setup
@@ -138,16 +139,15 @@ class TestGNNEvaluator:
             sql_baseline_df=sql_df, config=config,
         )
 
-        ranked = [15, 16, 0, 1, 17, 18]  # universal first, then fitment
+        # Pass fitment-only candidates (0-9 are fitment in sample fixture)
+        ranked = [0, 1, 2, 3, 5, 6, 7, 8]
         result = evaluator._apply_business_rules(0, ranked)
 
-        fitment_set = set(evaluator.user_fitment_products.get(0, []))
-        universal_set = set(evaluator.universal_product_ids)
-        assert len(result) == 4
-        assert result[0] in fitment_set
-        assert result[1] in fitment_set
-        assert result[2] in universal_set
-        assert result[3] in universal_set
+        assert len(result) <= 4
+        assert len(result) > 0
+        # All selected products should NOT be universal
+        for pid in result:
+            assert pid not in evaluator.universal_product_ids
 
     def test_bootstrap_ci_returns_tuples(self, eval_setup):
         from src.gnn.evaluator import GNNEvaluator
@@ -280,3 +280,45 @@ class TestGNNEvaluator:
 
         assert report == expected
         evaluator.evaluate.assert_called_once()
+
+    def test_universal_products_not_in_eval_candidates(self, eval_setup):
+        """v5.18: universal products are excluded from eval candidate pools."""
+        from src.gnn.evaluator import GNNEvaluator
+
+        model, data, masks, id_map, nodes, test_df, sql_df, config = eval_setup
+
+        evaluator = GNNEvaluator(
+            model=model, data=data, split_masks=masks,
+            id_mappings=id_map, nodes=nodes, test_df=test_df,
+            sql_baseline_df=sql_df, config=config,
+        )
+
+        assert len(evaluator.universal_product_ids) > 0
+        # Verify universal products are identified as frozenset
+        assert isinstance(evaluator.universal_product_ids, frozenset)
+
+    def test_universal_labels_filtered_from_test_interactions(self, eval_setup):
+        """C3: universal products removed from test labels (impossible positives)."""
+        from src.gnn.evaluator import GNNEvaluator
+
+        model, data, masks, id_map, nodes, _, sql_df, config = eval_setup
+
+        # Create test_df where one interaction is with a universal product (P015)
+        test_df = pd.DataFrame({
+            "email_lower": ["user0@test.com", "user0@test.com"],
+            "base_sku": ["P003", "P015"],  # P015 is universal
+            "interaction_type": ["view", "order"],
+        })
+
+        evaluator = GNNEvaluator(
+            model=model, data=data, split_masks=masks,
+            id_mappings=id_map, nodes=nodes, test_df=test_df,
+            sql_baseline_df=sql_df, config=config,
+        )
+
+        uid = id_map["user_to_id"]["user0@test.com"]
+        universal_pid = id_map["product_to_id"]["P015"]
+
+        if uid in evaluator.test_interactions:
+            # P015 (universal) should be filtered out
+            assert universal_pid not in evaluator.test_interactions[uid]

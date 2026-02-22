@@ -82,15 +82,26 @@ class GNNTrainer:
         # Build fitment index for hard negative sampling
         self.user_fitment_products = build_fitment_index(self.data)
 
-        # Universal pool for validation-time candidate parity with evaluator.
+        # Universal product IDs (excluded from eval candidates — v5.18 alignment).
         universal_mask = getattr(self.data["product"], "is_universal", None)
         if universal_mask is not None:
-            self.universal_product_ids = (
+            self.universal_product_ids: frozenset[int] = frozenset(
                 universal_mask.nonzero(as_tuple=True)[0].detach().cpu().tolist()
             )
         else:
-            self.universal_product_ids = []
-        self.all_product_ids = list(range(self.data["product"].num_nodes))
+            self.universal_product_ids = frozenset()
+
+        # C3: filter universal products from test labels (impossible positives).
+        self.test_interactions = {
+            uid: prods - self.universal_product_ids
+            for uid, prods in self.test_interactions.items()
+            if prods - self.universal_product_ids
+        }
+
+        self.all_product_ids = [
+            p for p in range(self.data["product"].num_nodes)
+            if p not in self.universal_product_ids
+        ]
         self._eval_candidate_cache: dict[int, list[int]] = {}
         self._fallback_warned = False
 
@@ -108,18 +119,18 @@ class GNNTrainer:
         logger.info(f"Training edges: {len(self.pos_users)} positive pairs")
 
     def _get_eval_candidates(self, user_id: int) -> list[int]:
-        """Return validation candidate pool: fitment + universal, deduplicated."""
+        """Return validation candidate pool: fitment-only (no universals, v5.18)."""
         if user_id in self._eval_candidate_cache:
             return self._eval_candidate_cache[user_id]
 
         fitment = self.user_fitment_products.get(user_id, [])
-        eligible = list(dict.fromkeys(fitment + self.universal_product_ids))
+        eligible = [p for p in fitment if p not in self.universal_product_ids]
         if not eligible:
             eligible = self.all_product_ids
             if not self._fallback_warned:
                 logger.warning(
-                    "Eval candidate fallback: user %d has no fitment/universal products, "
-                    "using all %d products (80x+ cost increase)",
+                    "Eval candidate fallback: user %d has no fitment products, "
+                    "using all %d non-universal products",
                     user_id, len(eligible),
                 )
                 self._fallback_warned = True

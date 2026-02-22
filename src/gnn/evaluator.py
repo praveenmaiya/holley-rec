@@ -46,7 +46,7 @@ class GNNEvaluator:
         product_to_id = id_mappings["product_to_id"]
 
         # Build product metadata used by post-GNN rules.
-        self.universal_product_ids: list[int] = []
+        self.universal_product_ids: frozenset[int] = frozenset()
         self.part_type_by_product_id: dict[int, str] = {}
         if "products" in nodes:
             products = (
@@ -62,7 +62,7 @@ class GNNEvaluator:
                 products["product_id"],
                 products["part_type"].fillna("").astype(str),
             ))
-            self.universal_product_ids = (
+            self.universal_product_ids = frozenset(
                 products.loc[
                     products["is_universal"].fillna(False).astype(bool),
                     "product_id",
@@ -70,7 +70,7 @@ class GNNEvaluator:
                 .drop_duplicates()
                 .tolist()
             )
-        logger.info(f"Universal product pool (eval): {len(self.universal_product_ids)} products")
+        logger.info(f"Universal products (excluded from eval): {len(self.universal_product_ids)}")
 
         # Build test set: user_id -> set of product_ids
         self.test_interactions: dict[int, set[int]] = {}
@@ -89,7 +89,11 @@ class GNNEvaluator:
             test_pairs["user_id"] = test_pairs["user_id"].astype(int)
             test_pairs["product_id"] = test_pairs["product_id"].astype(int)
             for uid, group in test_pairs.groupby("user_id"):
-                self.test_interactions[int(uid)] = set(group["product_id"].tolist())
+                # C3: filter universal products from test labels — they can't appear
+                # in candidate pools so including them creates impossible positives.
+                products = set(group["product_id"].tolist()) - self.universal_product_ids
+                if products:
+                    self.test_interactions[int(uid)] = products
 
         # Build SQL baseline: user_id -> list of product_ids (sorted by rank)
         self.sql_baseline: dict[int, list[int]] = {}
@@ -128,6 +132,12 @@ class GNNEvaluator:
 
         # Build fitment index: user_id -> list of product_ids
         self.user_fitment_products = build_fitment_index(self.data)
+
+        # Finding 5: precompute fallback candidate pool once (O(1) per user)
+        self.all_non_universal_products: list[int] = [
+            p for p in range(self.data["product"].num_nodes)
+            if p not in self.universal_product_ids
+        ]
 
     @torch.no_grad()
     def evaluate(self, split: str = "test") -> dict[str, Any]:
@@ -168,10 +178,11 @@ class GNNEvaluator:
         n_fallback = 0
         for uid in evaluable_users:
             fitment = self.user_fitment_products.get(uid, [])
-            # Combine fitment + universal products (deduplicated, preserving order)
-            eligible = list(dict.fromkeys(fitment + self.universal_product_ids))
+            # Fitment-only candidates (no universals — v5.18 alignment)
+            eligible = [p for p in fitment if p not in self.universal_product_ids]
             if not eligible:
-                eligible = list(range(self.data["product"].num_nodes))
+                # Finding 5: use precomputed list instead of rebuilding per user
+                eligible = self.all_non_universal_products
                 n_fallback += 1
 
             eligible_t = torch.tensor(eligible, dtype=torch.long)
@@ -185,9 +196,9 @@ class GNNEvaluator:
 
         if n_fallback > 0:
             logger.warning(
-                "Candidate fallback: %d/%d eval users had no fitment/universal products, "
-                "using all %d products as candidates",
-                n_fallback, len(evaluable_users), self.data["product"].num_nodes,
+                "Candidate fallback: %d/%d eval users had no fitment products, "
+                "using all non-universal products as candidates",
+                n_fallback, len(evaluable_users),
             )
 
         # Compute metrics
@@ -252,14 +263,13 @@ class GNNEvaluator:
         exclusion would make offline metrics non-comparable across runs.
         """
         fitment_set = set(self.user_fitment_products.get(user_id, []))
-        universal_set = set(self.universal_product_ids)
         return apply_slot_reservation_with_diversity(
             ranked_products=ranked_products,
             fitment_set=fitment_set,
-            universal_set=universal_set,
+            universal_set=frozenset(),
             part_type_by_product=self.part_type_by_product_id,
-            fitment_slots=2,
-            universal_slots=2,
+            fitment_slots=4,
+            universal_slots=0,
             total_slots=4,
             max_per_part_type=2,
         )

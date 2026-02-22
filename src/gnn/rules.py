@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 def apply_slot_reservation_with_diversity(
     ranked_products: Iterable[int],
     fitment_set: set[int],
-    universal_set: set[int],
+    universal_set: set[int] | frozenset[int] | None,
     part_type_by_product: dict[int, str],
     *,
     fitment_slots: int = 2,
@@ -30,6 +30,10 @@ def apply_slot_reservation_with_diversity(
     4. Enforce `max_per_part_type` across all phases.
     5. Skip products in `excluded_products` (e.g. recently purchased).
     """
+    # M2: normalize universal_set to avoid TypeError on None
+    if universal_set is None:
+        universal_set = frozenset()
+
     result: list[int] = []
     seen_products: set[int] = set(excluded_products) if excluded_products else set()
     part_type_counts: dict[str, int] = {}
@@ -96,3 +100,46 @@ def build_fitment_index(data: HeteroData) -> dict[int, list[int]]:
 
     # Deterministic ordering avoids run-to-run tie-break instability.
     return {u: sorted(prods) for u, prods in user_products.items()}
+
+
+def select_popularity_fallback(
+    popularity_ranked_ids: list[int],
+    already_selected: set[int],
+    excluded_products: set[int],
+    part_type_by_product: dict[int, str],
+    part_type_counts: dict[str, int],
+    *,
+    max_per_part_type: int = 2,
+    slots_needed: int = 4,
+    universal_product_ids: frozenset[int] | set[int] | None = None,
+) -> list[int]:
+    """Select popularity-ranked fallback products respecting diversity and exclusions.
+
+    Walks the pre-sorted popularity list and picks products that:
+    - Are not already selected or excluded
+    - Are not universal (v5.18 alignment)
+    - Respect the PartType diversity cap (shared with main pass)
+
+    Returns up to ``slots_needed`` product IDs.
+    """
+    if universal_product_ids is None:
+        universal_product_ids = frozenset()
+
+    result: list[int] = []
+    skip = already_selected | excluded_products
+
+    for pid in popularity_ranked_ids:
+        if len(result) >= slots_needed:
+            break
+        if pid in skip:
+            continue
+        if pid in universal_product_ids:
+            continue
+        part_type = part_type_by_product.get(pid, "")
+        if part_type_counts.get(part_type, 0) >= max_per_part_type:
+            continue
+        result.append(pid)
+        skip.add(pid)
+        part_type_counts[part_type] = part_type_counts.get(part_type, 0) + 1
+
+    return result

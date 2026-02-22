@@ -12,7 +12,7 @@ import torch
 
 from src.bq_client import BQClient
 from src.gnn.model import HolleyGAT
-from src.gnn.rules import apply_slot_reservation_with_diversity
+from src.gnn.rules import apply_slot_reservation_with_diversity, select_popularity_fallback
 
 if TYPE_CHECKING:
     from torch_geometric.data import HeteroData
@@ -54,6 +54,7 @@ class GNNScorer:
         self.min_users = int(qa_cfg.get("min_users", 250_000))
         if self.min_users < 0:
             raise ValueError(f"output.qa.min_users must be non-negative, got {self.min_users}")
+        self.min_coverage = float(qa_cfg.get("min_coverage", 0.95))
 
         # Reverse mappings
         self.id_to_user = {v: k for k, v in id_mappings["user_to_id"].items()}
@@ -69,8 +70,23 @@ class GNNScorer:
         # Build fitment and vehicle mappings
         self._build_vehicle_groups()
 
-        # Build universal product pool (is_universal=True products)
-        self._build_universal_pool()
+        # Build universal product ID set (for exclusion from candidates/output)
+        self._build_universal_set()
+
+        # Build popularity index for fallback tiers
+        self._build_popularity_index()
+
+        # Fallback config
+        fallback_cfg = config.get("fallback", {})
+        self.fallback_enabled = fallback_cfg.get("enabled", True)
+        self.min_recs = fallback_cfg.get("min_recs", 3)
+        self.score_sentinel = fallback_cfg.get("score_sentinel", 0.0)
+
+        # Finding 6: validate min_recs against 4-slot output schema
+        if not 0 <= self.min_recs <= 4:
+            raise ValueError(
+                f"fallback.min_recs must be 0-4 (output schema has 4 slots), got {self.min_recs}"
+            )
 
     def _build_product_metadata(self):
         """Build sku -> (name, url, image_url, price) from product nodes."""
@@ -170,14 +186,132 @@ class GNNScorer:
                 f"{n_excluded} total product exclusions"
             )
 
-    def _build_universal_pool(self):
-        """Build set of universal product IDs (is_universal=True)."""
+    def _build_universal_set(self):
+        """Build set of universal product IDs (for exclusion from candidates/output)."""
         product_to_id = self.id_mappings["product_to_id"]
-        self.universal_product_ids: list[int] = []
-        for sku, meta in self.product_meta.items():
-            if meta.get("is_universal", False) and sku in product_to_id:
-                self.universal_product_ids.append(product_to_id[sku])
-        logger.info(f"Universal product pool: {len(self.universal_product_ids)} products")
+        self.universal_product_ids: frozenset[int] = frozenset(
+            product_to_id[sku]
+            for sku, meta in self.product_meta.items()
+            if meta.get("is_universal", False) and sku in product_to_id
+        )
+        logger.info(f"Universal products (excluded from output): {len(self.universal_product_ids)}")
+
+    def _build_popularity_index(self):
+        """Build popularity-ranked product lists for fallback tiers.
+
+        Tiers mirror v5.18: vehicle → make → global.
+        All indices contain fitment-only products (no universals).
+        """
+        products_df = self.nodes["products"]
+        product_to_id = self.id_mappings["product_to_id"]
+
+        # Build product_id -> log_popularity mapping
+        self.product_popularity: dict[int, float] = {}
+        for _, row in products_df.iterrows():
+            pid = product_to_id.get(row.get("base_sku"))
+            if pid is not None:
+                self.product_popularity[pid] = float(row.get("log_popularity", 0.0))
+
+        # Vehicle fitment by popularity (fitment-only, no universals)
+        self.vehicle_fitment_by_popularity: dict[int, list[int]] = {}
+        for vid, pids in self.vehicle_products.items():
+            fitment_only = [p for p in pids if p not in self.universal_product_ids]
+            self.vehicle_fitment_by_popularity[vid] = sorted(
+                fitment_only, key=lambda p: -self.product_popularity.get(p, 0.0)
+            )
+
+        # Make fitment by popularity: make -> union of all vehicle fitment products for that make
+        vehicles_df = self.nodes.get("vehicles")
+        vehicle_to_id = self.id_mappings.get("vehicle_to_id", {})
+        self.make_fitment_by_popularity: dict[str, list[int]] = {}
+        if vehicles_df is not None:
+            make_products: dict[str, set[int]] = {}
+            for _, vrow in vehicles_df.iterrows():
+                make = vrow.get("make", "")
+                vkey = f"{vrow.get('make', '')}|{vrow.get('model', '')}"
+                vid = vehicle_to_id.get(vkey)
+                if vid is not None:
+                    prods = self.vehicle_fitment_by_popularity.get(vid, [])
+                    make_products.setdefault(make, set()).update(prods)
+            for make, pids in make_products.items():
+                self.make_fitment_by_popularity[make] = sorted(
+                    pids, key=lambda p: -self.product_popularity.get(p, 0.0)
+                )
+
+        # Global fitment by popularity
+        all_fitment = set()
+        for pids in self.vehicle_products.values():
+            all_fitment.update(p for p in pids if p not in self.universal_product_ids)
+        self.global_fitment_by_popularity: list[int] = sorted(
+            all_fitment, key=lambda p: -self.product_popularity.get(p, 0.0)
+        )
+
+        logger.info(
+            f"Popularity index: {len(self.vehicle_fitment_by_popularity)} vehicles, "
+            f"{len(self.make_fitment_by_popularity)} makes, "
+            f"{len(self.global_fitment_by_popularity)} global fitment products"
+        )
+
+    def _apply_fallback(
+        self,
+        vehicle_ids: list[int] | None,
+        makes: list[str] | None,
+        existing_recs: list[tuple[int, float, bool]],
+        excluded_products: set[int] | None,
+        part_type_counts: dict[str, int],
+    ) -> list[tuple[int, float, bool]]:
+        """Apply 3-tier popularity fallback to fill up to min_recs.
+
+        Tiers (mirrors v5.18 segment→make→global):
+        1. Popularity-ranked fitment for user's specific vehicle(s)
+        2. Popularity-ranked fitment for user's vehicle make(s)
+        3. Global popular fitment products
+
+        Finding 1: accepts multiple vehicles/makes for multi-vehicle users.
+        Finding 2: returns (product_id, score_sentinel, True) with explicit provenance.
+        """
+        slots_needed = self.min_recs - len(existing_recs)
+        if slots_needed <= 0:
+            return []
+
+        already_selected = {pid for pid, _, _ in existing_recs}
+        excluded = excluded_products or set()
+        fallback_recs: list[tuple[int, float, bool]] = []
+
+        def _pick_from_pool(pool: list[int]) -> None:
+            nonlocal slots_needed
+            if slots_needed <= 0:
+                return
+            picks = select_popularity_fallback(
+                pool, already_selected, excluded,
+                self.part_type_by_product_id, part_type_counts,
+                max_per_part_type=2, slots_needed=slots_needed,
+                universal_product_ids=self.universal_product_ids,
+            )
+            for pid in picks:
+                fallback_recs.append((pid, self.score_sentinel, True))
+                already_selected.add(pid)
+            slots_needed -= len(picks)
+
+        # Tier 1: vehicle fitment by popularity (try each vehicle)
+        if vehicle_ids:
+            for vid in vehicle_ids:
+                if slots_needed <= 0:
+                    break
+                _pick_from_pool(self.vehicle_fitment_by_popularity.get(vid, []))
+
+        # Tier 2: make fitment by popularity (try each make)
+        if makes:
+            for make in makes:
+                if slots_needed <= 0:
+                    break
+                _pick_from_pool(self.make_fitment_by_popularity.get(make, []))
+
+        # Tier 3: global fitment by popularity
+        if slots_needed > 0:
+            _pick_from_pool(self.global_fitment_by_popularity)
+
+        return fallback_recs
 
     @staticmethod
     def _output_columns() -> list[str]:
@@ -188,12 +322,18 @@ class GNNScorer:
                 f"rec{i}_sku", f"rec{i}_name", f"rec{i}_url",
                 f"rec{i}_image_url", f"rec{i}_price", f"rec{i}_score",
             ])
-        cols.extend(["fitment_count", "model_version"])
+        cols.extend(["fitment_count", "is_fallback", "fallback_start_idx", "model_version"])
         return cols
 
     @torch.no_grad()
     def score_all_users(self) -> pd.DataFrame:
-        """Score all target users using vehicle-grouped strategy.
+        """Score all target users using vehicle-grouped strategy + popularity fallback.
+
+        v5.18 alignment: no universal products in output. All 4 slots are fitment.
+        Users with sparse/no fitment get popularity-ranked fallback (vehicle→make→global).
+
+        Finding 1: Multi-vehicle users get merged scores (max per product across
+        all owned vehicles), then diversity selection runs once per user.
 
         Returns wide-format DataFrame matching final_vehicle_recommendations schema.
         """
@@ -205,82 +345,111 @@ class GNNScorer:
         user_embs = user_embs.cpu()
         product_embs = product_embs.cpu()
 
-        # Precompute universal product embeddings for universal slot scoring
-        universal_ids_t = torch.tensor(self.universal_product_ids, dtype=torch.long)
-        universal_embs = product_embs[universal_ids_t] if len(universal_ids_t) > 0 else None
-
         # Only score target users (with email consent)
         users_df = self.nodes["users"]
         target_emails = set(users_df[users_df["has_email_consent"]]["email_lower"])
-        universal_set = set(self.universal_product_ids)
 
-        rows = []
+        # First pass: collect per-user product scores across ALL vehicles.
+        # Finding 1: merge across vehicles (max per product) instead of overwriting.
+        user_product_scores: dict[str, dict[int, float]] = {}
+        email_vehicles: dict[str, list[tuple[int, str | None]]] = {}
         n_vehicles = len(self.vehicle_users)
         vehicle_target_emails: set[str] = set()
-        no_fitment_miss_emails: set[str] = set()
-        empty_after_exclusion_emails: set[str] = set()
 
         for vid_idx, (vid, user_ids) in enumerate(self.vehicle_users.items()):
             if vid_idx % 200 == 0:
                 logger.info(f"Scoring vehicle {vid_idx}/{n_vehicles}...")
 
-            # Filter to target users in this vehicle group
+            vkey = self.id_to_vehicle.get(vid, "")
+            make = vkey.split("|")[0] if "|" in vkey else None
+
             target_uids = [uid for uid in user_ids
                            if self.id_to_user.get(uid) in target_emails]
             if not target_uids:
                 continue
 
             for uid in target_uids:
-                vehicle_target_emails.add(self.id_to_user[uid])
+                email = self.id_to_user[uid]
+                vehicle_target_emails.add(email)
+                email_vehicles.setdefault(email, []).append((vid, make))
 
-            fitment_ids = self.vehicle_products.get(vid, [])
+            # Fitment-only candidates (exclude universals)
+            raw_fitment = self.vehicle_products.get(vid, [])
+            fitment_ids = [p for p in raw_fitment if p not in self.universal_product_ids]
+            if not fitment_ids:
+                continue
 
-            # Batch scoring: all users x all fitment products for this vehicle
             target_uids_t = torch.tensor(target_uids, dtype=torch.long)
-            batch_user_embs = user_embs[target_uids_t]  # (N_users, 128)
-            fitment_scores = None
-            if fitment_ids:
-                fitment_ids_t = torch.tensor(fitment_ids, dtype=torch.long)
-                fitment_embs = product_embs[fitment_ids_t]
-                fitment_scores = torch.mm(batch_user_embs, fitment_embs.t())  # (N_users, N_fitment)
+            batch_user_embs = user_embs[target_uids_t]
+            fitment_ids_t = torch.tensor(fitment_ids, dtype=torch.long)
+            fitment_embs = product_embs[fitment_ids_t]
+            fitment_scores = torch.mm(batch_user_embs, fitment_embs.t())
 
-            # Batch scoring: all users x universal products
-            universal_scores = None
-            if universal_embs is not None and len(universal_embs) > 0:
-                universal_scores = torch.mm(batch_user_embs, universal_embs.t())  # (N_users, N_universal)
-
-            candidate_pool = set(fitment_ids) | universal_set
-            empty_fitment_scores = torch.empty(0, dtype=product_embs.dtype)
             for i, uid in enumerate(target_uids):
                 email = self.id_to_user[uid]
+                scores_dict = user_product_scores.setdefault(email, {})
+                for j, pid in enumerate(fitment_ids):
+                    score = fitment_scores[i][j].item()
+                    if pid not in scores_dict or score > scores_dict[pid]:
+                        scores_dict[pid] = score
+
+        # Select top4 for each user with merged scores
+        user_recs: dict[str, list[tuple[int, float, bool]]] = {}
+        for email, product_scores in user_product_scores.items():
+            if not product_scores:
+                continue
+            sorted_items = sorted(product_scores.items(), key=lambda x: -x[1])
+            merged_ids = [pid for pid, _ in sorted_items]
+            merged_scores = torch.tensor([s for _, s in sorted_items])
+            excluded = self.user_excluded_products.get(email)
+            recs = self._select_top4(merged_ids, merged_scores, excluded_products=excluded)
+            if recs:
+                user_recs[email] = recs
+
+        # Second pass (C4): iterate ALL target users — apply fallback for missing/sparse
+        n_fallback = 0
+        if self.fallback_enabled:
+            for email in target_emails:
+                existing = user_recs.get(email, [])
+                if len(existing) >= self.min_recs:
+                    continue
+
+                # Finding 1: use all vehicles/makes for multi-vehicle fallback
+                vids_and_makes = email_vehicles.get(email, [])
+                # R3 #3: sort vids for deterministic tier-1 fallback ordering
+                vids = sorted({vm[0] for vm in vids_and_makes}) or None
+                # R2 LOW fix: sorted for deterministic make-tier fallback ordering
+                makes_set = {vm[1] for vm in vids_and_makes if vm[1]}
+                makes = sorted(makes_set) if makes_set else None
                 excluded = self.user_excluded_products.get(email)
-                recs = self._select_top4(
-                    fitment_ids,
-                    fitment_scores[i] if fitment_scores is not None else empty_fitment_scores,
-                    self.universal_product_ids, universal_scores[i] if universal_scores is not None else None,
-                    excluded_products=excluded,
+
+                # Carry over part_type_counts from existing recs
+                part_type_counts: dict[str, int] = {}
+                for pid, _, _ in existing:
+                    pt = self.part_type_by_product_id.get(pid, "")
+                    part_type_counts[pt] = part_type_counts.get(pt, 0) + 1
+
+                fallback_recs = self._apply_fallback(
+                    vids, makes, existing, excluded, part_type_counts,
                 )
-                if recs:
-                    rows.append(self._format_row(email, recs))
-                else:
-                    if candidate_pool and excluded and candidate_pool.issubset(excluded):
-                        empty_after_exclusion_emails.add(email)
-                    elif not fitment_ids:
-                        no_fitment_miss_emails.add(email)
+                if fallback_recs:
+                    user_recs[email] = existing + fallback_recs
+                    n_fallback += 1
+
+        if n_fallback > 0:
+            logger.info(f"Fallback applied to {n_fallback} users")
+
+        # Build output DataFrame
+        rows = []
+        for email, recs in user_recs.items():
+            rows.append(self._format_row(email, recs))
 
         df = pd.DataFrame(rows, columns=self._output_columns())
 
-        # Detailed vehicle-miss diagnostics
-        scored_emails = {r["email_lower"] for r in rows} if rows else set()
+        # Diagnostics
+        scored_emails = set(user_recs.keys())
         missing_emails = target_emails - scored_emails
         n_no_vehicle = len((target_emails - vehicle_target_emails) & missing_emails)
-        n_no_fitment = len(no_fitment_miss_emails & missing_emails)
-        n_empty_after_exclusion = len(empty_after_exclusion_emails & missing_emails)
-        unclassified_miss = missing_emails - (
-            (target_emails - vehicle_target_emails)
-            | no_fitment_miss_emails
-            | empty_after_exclusion_emails
-        )
 
         if n_no_vehicle > 0:
             logger.warning(
@@ -288,81 +457,69 @@ class GNNScorer:
                 f"in graph ({n_no_vehicle}/{len(target_emails)} = "
                 f"{n_no_vehicle / len(target_emails) * 100:.1f}%)"
             )
-        if n_no_fitment > 0:
+        if missing_emails:
             logger.warning(
-                f"No fitment products: {n_no_fitment} users had no fitment candidates "
-                f"and no recommendations"
-            )
-        if n_empty_after_exclusion > 0:
-            logger.warning(
-                f"Empty after exclusion: {n_empty_after_exclusion} users had all "
-                f"candidates excluded (purchase exclusion + diversity cap)"
-            )
-        if unclassified_miss:
-            logger.warning(
-                "Unclassified misses: %d users had no recommendations for other reasons",
-                len(unclassified_miss),
+                f"Missing from output: {len(missing_emails)} target users "
+                f"({len(missing_emails)}/{len(target_emails)} = "
+                f"{len(missing_emails) / len(target_emails) * 100:.1f}%)"
             )
         logger.info(f"Scored {len(df)} users across {n_vehicles} vehicles")
 
-        self._qa_checks(df)
+        # Finding 4: pass target count for coverage QA check
+        self._qa_checks(df, target_count=len(target_emails))
         return df
 
     def _select_top4(
         self,
         fitment_ids: list[int],
         fitment_scores: torch.Tensor,
-        universal_ids: list[int],
-        universal_scores: torch.Tensor | None,
         excluded_products: set[int] | None = None,
-    ) -> list[tuple[int, float]]:
-        """Select top 4 products: 2 fitment + 2 universal with PartType diversity."""
-        # Rank fitment and universal pools by score
+    ) -> list[tuple[int, float, bool]]:
+        """Select top 4 fitment products with PartType diversity.
+
+        v5.18 alignment: all 4 slots are fitment (no universals in output).
+        Finding 2: returns (pid, score, is_fallback) 3-tuples with provenance.
+        """
         fitment_scored = sorted(
             zip(fitment_ids, fitment_scores.numpy()),
             key=lambda x: -x[1],
         )
 
-        universal_scored = []
-        if universal_scores is not None and len(universal_ids) > 0:
-            universal_scored = sorted(
-                zip(universal_ids, universal_scores.numpy()),
-                key=lambda x: -x[1],
-            )
-
-        combined_scored = sorted(
-            fitment_scored + universal_scored,
-            key=lambda x: -x[1],
-        )
-        ranked_products = [pid for pid, _ in combined_scored]
+        ranked_products = [pid for pid, _ in fitment_scored]
         selected_products = apply_slot_reservation_with_diversity(
             ranked_products=ranked_products,
             fitment_set=set(fitment_ids),
-            universal_set=set(universal_ids),
+            universal_set=frozenset(),
             part_type_by_product=self.part_type_by_product_id,
-            fitment_slots=2,
-            universal_slots=2,
+            fitment_slots=4,
+            universal_slots=0,
             total_slots=4,
             max_per_part_type=2,
             excluded_products=excluded_products,
         )
 
         score_by_product: dict[int, float] = {}
-        for pid, score in combined_scored:
+        for pid, score in fitment_scored:
             if pid not in score_by_product:
                 score_by_product[pid] = float(score)
 
         return [
-            (pid, score_by_product.get(pid, float("-inf")))
+            (pid, score_by_product.get(pid, float("-inf")), False)
             for pid in selected_products
         ]
 
-    def _format_row(self, email: str, recs: list[tuple[int, float]]) -> dict:
-        """Format a single user's recommendations as a wide-format row."""
-        row = {"email_lower": email}
-        fitment_count = 0
+    def _format_row(self, email: str, recs: list[tuple[int, float, bool]]) -> dict:
+        """Format a single user's recommendations as a wide-format row.
 
-        for i, (pid, score) in enumerate(recs, 1):
+        All recs are fitment (v5.18: no universals in output).
+        Finding 2: is_fallback determined from explicit provenance flag,
+        not from score equality (avoids false positives on GNN score == 0.0).
+        """
+        row = {"email_lower": email}
+        has_fallback = False
+        fallback_start_idx = len(recs)  # default: no fallback
+
+        for i, (pid, score, from_fallback) in enumerate(recs, 1):
             sku = self.id_to_product.get(pid, "")
             meta = self.product_meta.get(sku, {})
             row[f"rec{i}_sku"] = meta.get("sku", sku)
@@ -371,8 +528,10 @@ class GNNScorer:
             row[f"rec{i}_image_url"] = meta.get("image_url", "")
             row[f"rec{i}_price"] = meta.get("price", 0)
             row[f"rec{i}_score"] = score
-            if not meta.get("is_universal", True):
-                fitment_count += 1
+            if from_fallback:
+                if not has_fallback:
+                    fallback_start_idx = i - 1  # 0-based index of first fallback slot
+                has_fallback = True
 
         # Fill remaining slots with None
         for i in range(len(recs) + 1, 5):
@@ -383,15 +542,23 @@ class GNNScorer:
             row[f"rec{i}_price"] = None
             row[f"rec{i}_score"] = None
 
-        row["fitment_count"] = fitment_count
+        row["fitment_count"] = len(recs)
+        row["is_fallback"] = has_fallback
+        # R3 #2: explicit boundary index so QA uses provenance, not score equality
+        row["fallback_start_idx"] = fallback_start_idx
         row["model_version"] = self.config.get("output", {}).get(
             "model_version", "v6.0"
         )
 
         return row
 
-    def _qa_checks(self, df: pd.DataFrame) -> None:
-        """Run QA checks before writing to BQ. Raises QAFailedError on critical failures."""
+    def _qa_checks(self, df: pd.DataFrame, target_count: int | None = None) -> None:
+        """Run QA checks before writing to BQ. Raises QAFailedError on critical failures.
+
+        Finding 3: Score ordering skips fallback rows (mixed GNN+fallback scores
+        can have valid ordering violations at the boundary).
+        Finding 4: Coverage check validates output vs target cohort size.
+        """
         failures = []
 
         required_cols = self._output_columns()
@@ -404,6 +571,15 @@ class GNNScorer:
         # User count
         if len(df) < self.min_users:
             failures.append(f"Only {len(df)} users (expected >= {self.min_users})")
+
+        # Finding 4: coverage check against target cohort (R2: configurable threshold)
+        if target_count is not None and target_count > 0:
+            coverage = len(df) / target_count
+            if coverage < self.min_coverage:
+                failures.append(
+                    f"Low target coverage: {len(df)}/{target_count} "
+                    f"({coverage:.1%}, expected >= {self.min_coverage:.0%})"
+                )
 
         # Duplicates
         n_dupes = df["email_lower"].duplicated().sum()
@@ -434,13 +610,36 @@ class GNNScorer:
                 if len(bad_urls) > 0:
                     failures.append(f"{len(bad_urls)} non-HTTPS image URLs in slot {i}")
 
-        # Score ordering (all rows — numpy comparison is cheap)
-        score_matrix = df[[f"rec{i}_score" for i in range(1, 5)]].to_numpy(
-            dtype=np.float64, copy=False
-        )
-        score_matrix = np.where(np.isnan(score_matrix), -np.inf, score_matrix)
-        if np.any(score_matrix[:, :-1] < score_matrix[:, 1:]):
-            failures.append("Score ordering violated")
+        # Finding 3 + R3 #2: Score ordering check using explicit provenance.
+        # Non-fallback rows: full strict ordering.
+        # Fallback rows: validate only GNN-scored prefix using fallback_start_idx
+        # (avoids false negatives when GNN score == sentinel).
+        score_cols = [f"rec{i}_score" for i in range(1, 5)]
+        is_fb = df["is_fallback"].fillna(False).astype(bool)
+
+        # Pure GNN rows: strict ordering
+        non_fallback = df[~is_fb]
+        if not non_fallback.empty:
+            sm = non_fallback[score_cols].to_numpy(dtype=np.float64, copy=False)
+            sm = np.where(np.isnan(sm), -np.inf, sm)
+            if np.any(sm[:, :-1] < sm[:, 1:]):
+                failures.append("Score ordering violated (non-fallback rows)")
+
+        # Mixed rows: validate only the GNN-scored prefix using provenance index
+        fallback_rows = df[is_fb]
+        if not fallback_rows.empty:
+            sm = fallback_rows[score_cols].to_numpy(dtype=np.float64, copy=False)
+            fb_idx = fallback_rows["fallback_start_idx"].to_numpy(dtype=int)
+            for i, row_scores in enumerate(sm):
+                prefix_len = fb_idx[i]
+                for j in range(prefix_len - 1):
+                    if not np.isnan(row_scores[j]) and not np.isnan(row_scores[j + 1]):
+                        if row_scores[j] < row_scores[j + 1]:
+                            failures.append("Score ordering violated (GNN prefix in fallback rows)")
+                            break
+                else:
+                    continue
+                break
 
         if failures:
             for f in failures:
