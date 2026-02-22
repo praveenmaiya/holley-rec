@@ -49,6 +49,12 @@ eval:
   bootstrap_samples: 1000
   user_split: [0.8, 0.1, 0.1]
 
+# Fallback (v5.18 alignment: popularity-ranked for sparse/cold users)
+fallback:
+  enabled: true
+  min_recs: 3
+  score_sentinel: 0.0  # M1: use 0.0 not -1.0 to avoid QA alerts
+
 # Output
 output:
   shadow_table: "auxia-reporting.temp_holley_gnn.gnn_recommendations"

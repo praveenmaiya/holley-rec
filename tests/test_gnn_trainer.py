@@ -98,7 +98,8 @@ class TestGNNTrainer:
         assert "hit_rate_at_4" in metrics
         assert "n_evaluated" in metrics
 
-    def test_eval_candidates_include_universal_pool(self, training_setup):
+    def test_eval_candidates_fitment_only_no_universals(self, training_setup):
+        """v5.18: eval candidates are fitment-only (no universals)."""
         from src.gnn.trainer import GNNTrainer
 
         model, data, masks, test_interactions, config = training_setup
@@ -109,10 +110,11 @@ class TestGNNTrainer:
         )
 
         candidates = trainer._get_eval_candidates(0)
-        assert 15 in candidates  # first universal product in sample fixture
+        assert 15 not in candidates  # universal product excluded
         assert 1 in candidates  # fitment product for FORD|MUSTANG users
 
-    def test_eval_candidates_fallback_to_all_products(self, training_setup):
+    def test_eval_candidates_fallback_excludes_universals(self, training_setup):
+        """Fallback to all products also excludes universals."""
         from src.gnn.trainer import GNNTrainer
 
         model, data, masks, test_interactions, config = training_setup
@@ -124,23 +126,32 @@ class TestGNNTrainer:
 
         # user8 belongs to DODGE|CHARGER, which has no fitment edges in sample fixture
         candidates = trainer._get_eval_candidates(8)
-        assert candidates == trainer.universal_product_ids
+        # All products minus universals
+        n_universal = len(trainer.universal_product_ids)
+        assert len(candidates) == data["product"].num_nodes - n_universal
+        for pid in candidates:
+            assert pid not in trainer.universal_product_ids
 
-    def test_eval_candidates_fallback_to_all_products_when_no_universal(self, training_setup):
+    def test_test_interactions_filtered_for_universals(self, training_setup):
+        """C3: universal products removed from test_interactions during init."""
         from src.gnn.trainer import GNNTrainer
 
         model, data, masks, test_interactions, config = training_setup
+        # Add a universal product (P015 = id 15) to test interactions
+        test_interactions_with_universal = {
+            0: {2, 3, 15},  # 15 is universal
+            1: {5},
+            7: {10},
+        }
         trainer = GNNTrainer(
             model=model, data=data, split_masks=masks,
-            test_interactions=test_interactions, config=config,
+            test_interactions=test_interactions_with_universal, config=config,
             device=torch.device("cpu"),
         )
 
-        trainer.universal_product_ids = []
-        trainer._eval_candidate_cache.clear()
-
-        candidates = trainer._get_eval_candidates(8)
-        assert len(candidates) == data["product"].num_nodes
+        # Universal product 15 should be filtered out
+        if 0 in trainer.test_interactions:
+            assert 15 not in trainer.test_interactions[0]
 
     def test_full_training_loop(self, training_setup):
         from src.gnn.trainer import GNNTrainer

@@ -5,7 +5,11 @@ import pytest
 torch = pytest.importorskip("torch")
 pytest.importorskip("torch_geometric")
 
-from src.gnn.rules import apply_slot_reservation_with_diversity, build_fitment_index  # noqa: E402
+from src.gnn.rules import (  # noqa: E402
+    apply_slot_reservation_with_diversity,
+    build_fitment_index,
+    select_popularity_fallback,
+)
 
 
 @pytest.fixture
@@ -228,6 +232,34 @@ class TestSlotReservation:
         assert len(result) == 4
         assert result[0] == 0
 
+    def test_universal_set_none_normalized_to_frozenset(self, part_types):
+        """M2: universal_set=None is normalized to frozenset() without TypeError."""
+        ranked = [0, 1, 3, 6]
+        fitment = {0, 1, 3, 6}
+
+        result = apply_slot_reservation_with_diversity(
+            ranked, fitment, None, part_types,
+            fitment_slots=4, universal_slots=0,
+        )
+
+        assert len(result) == 4
+        assert result == [0, 1, 3, 6]
+
+    def test_4_plus_0_fitment_only_slotting(self, part_types):
+        """v5.18: all 4 slots filled from fitment (no universal slots)."""
+        ranked = [0, 3, 6, 9, 10, 11]
+        fitment = {0, 3, 6, 9}
+        universal = frozenset()
+
+        result = apply_slot_reservation_with_diversity(
+            ranked, fitment, universal, part_types,
+            fitment_slots=4, universal_slots=0, total_slots=4,
+        )
+
+        assert len(result) == 4
+        for pid in result:
+            assert pid in fitment
+
 
 class TestBuildFitmentIndex:
     """Tests for the shared build_fitment_index utility."""
@@ -321,3 +353,105 @@ class TestBuildFitmentIndex:
         )
         result = build_fitment_index(data)
         assert result[0] == [1, 3, 7, 9]
+
+
+class TestSelectPopularityFallback:
+    """Tests for the popularity-ranked fallback function."""
+
+    @pytest.fixture
+    def part_types(self):
+        return {
+            0: "Ignition", 1: "Ignition", 2: "Ignition",
+            3: "Exhaust", 4: "Exhaust", 5: "Exhaust",
+            6: "Brakes", 7: "Brakes", 8: "Brakes",
+            9: "Wheels", 10: "Wheels",
+        }
+
+    def test_basic_selection(self, part_types):
+        """Selects top products from popularity list."""
+        result = select_popularity_fallback(
+            popularity_ranked_ids=[0, 3, 6, 9],
+            already_selected=set(),
+            excluded_products=set(),
+            part_type_by_product=part_types,
+            part_type_counts={},
+            slots_needed=3,
+        )
+
+        assert len(result) == 3
+        assert result == [0, 3, 6]
+
+    def test_skips_already_selected(self, part_types):
+        """Products already in recs are not duplicated."""
+        result = select_popularity_fallback(
+            popularity_ranked_ids=[0, 3, 6, 9],
+            already_selected={0, 3},
+            excluded_products=set(),
+            part_type_by_product=part_types,
+            part_type_counts={},
+            slots_needed=2,
+        )
+
+        assert 0 not in result
+        assert 3 not in result
+        assert result == [6, 9]
+
+    def test_skips_excluded_products(self, part_types):
+        """Purchased products are excluded."""
+        result = select_popularity_fallback(
+            popularity_ranked_ids=[0, 3, 6, 9],
+            already_selected=set(),
+            excluded_products={0, 6},
+            part_type_by_product=part_types,
+            part_type_counts={},
+            slots_needed=2,
+        )
+
+        assert 0 not in result
+        assert 6 not in result
+        assert result == [3, 9]
+
+    def test_respects_diversity_cap(self, part_types):
+        """Part-type diversity cap is enforced across main pass + fallback."""
+        result = select_popularity_fallback(
+            popularity_ranked_ids=[0, 1, 2, 3, 6],  # 0,1,2 are all Ignition
+            already_selected=set(),
+            excluded_products=set(),
+            part_type_by_product=part_types,
+            part_type_counts={"Ignition": 1},  # 1 already from main pass
+            max_per_part_type=2,
+            slots_needed=3,
+        )
+
+        # Only 1 more Ignition allowed, then must pick from other types
+        ignition_count = sum(1 for pid in result if part_types.get(pid) == "Ignition")
+        assert ignition_count <= 1
+
+    def test_filters_universal_products(self, part_types):
+        """Universal products are never selected as fallback."""
+        result = select_popularity_fallback(
+            popularity_ranked_ids=[0, 3, 6, 9],
+            already_selected=set(),
+            excluded_products=set(),
+            part_type_by_product=part_types,
+            part_type_counts={},
+            slots_needed=4,
+            universal_product_ids=frozenset({0, 3}),
+        )
+
+        assert 0 not in result
+        assert 3 not in result
+        assert result == [6, 9]
+
+    def test_returns_empty_when_no_candidates(self, part_types):
+        """Returns empty list when all products are excluded."""
+        result = select_popularity_fallback(
+            popularity_ranked_ids=[0, 3],
+            already_selected={0},
+            excluded_products={3},
+            part_type_by_product=part_types,
+            part_type_counts={},
+            slots_needed=2,
+        )
+
+        assert result == []
