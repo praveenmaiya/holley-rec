@@ -1,0 +1,92 @@
+# Auxia Recommendation Engine — Default Configuration
+# All options documented. Client configs override these values.
+
+contract_version: "1.0"  # Must match engine's supported major version
+
+# Client identification
+client:
+  id: default              # Used for resource namespacing
+  company_id: 0            # Auxia platform ID
+  env: dev                 # Environment tag (dev/staging/prod)
+
+# Topology: "user-product" (2-node) or "user-entity-product" (3-node)
+topology: user-product
+
+# Column name mappings (canonical DataFrame column names)
+columns:
+  user_id: user_id           # User identifier column
+  product_id: product_id     # Product identifier column
+  price: price               # Product price column
+  popularity: popularity     # Product popularity column (log scale)
+  category: category         # Category column for diversity cap (optional)
+  is_excluded: ~             # Boolean column for product exclusion (optional)
+  engagement_tier: engagement_tier  # User engagement tier (optional)
+  product_features: []       # Additional numeric product features
+
+# Entity config (only for user-entity-product topology)
+entity:
+  type_name: entity          # Node type label in graph
+  group_column: ~            # Column for tier-2 fallback grouping (optional)
+  features: []               # Numeric feature columns on entity nodes
+
+# Graph construction
+graph:
+  min_price: 0               # Price floor for QA checks
+  co_purchase_threshold: 2   # Min co-purchases to create edge
+  co_purchase_top_k: 50      # Max co-purchase edges per product
+  time_decay_halflife_days: 30
+
+# Model architecture
+model:
+  embedding_dim: 128
+  hidden_dim: 256
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.1
+  proj_dropout: 0.2
+
+# Training hyperparameters
+training:
+  lr_embedding: 0.001       # Slower LR for embeddings
+  lr_gnn: 0.01              # Faster LR for GNN layers
+  weight_decay: 0.01
+  max_epochs: 100
+  patience: 10
+  grad_clip: 1.0
+  negative_mix:              # Negative sampling strategy
+    in_batch: 0.5            # Shuffle positive products
+    fitment_hard: 0.3        # Same entity, not purchased (3-node only)
+    random: 0.2              # Uniform random
+
+# Evaluation
+eval:
+  k_values: [4, 10, 20]
+  test_window_days: 30
+  bootstrap_samples: 1000
+  user_split: [0.8, 0.1, 0.1]  # train/val/test
+  go_no_go:                  # Client-specific thresholds
+    go_delta: 0.03             # Delta >= this → GO (proceed to A/B)
+    maybe_delta: 0.01          # Delta >= this → MAYBE (try alternative first)
+    investigate_delta: -0.01   # Delta >= this → SKIP; below → INVESTIGATE
+    metric: hit_rate_at_4      # Metric to compute delta on
+
+# Scoring / output
+scoring:
+  total_slots: 4             # Exact output width
+  max_per_category: 2        # Diversity cap
+  min_recs: 3                # Min recs before fallback (must <= total_slots)
+
+# Fallback
+fallback:
+  enabled: true
+  score_sentinel: 0.0        # Score value for fallback recs
+
+# Output configuration
+output:
+  model_version: "1.0"
+  qa:
+    min_users: 0             # Minimum users in output (0 = no check)
+    min_coverage: 0.95       # Minimum coverage vs target cohort
+
+# Plugin class (loaded dynamically). Set to null for DefaultPlugin.
+plugin: ~
