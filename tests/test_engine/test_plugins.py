@@ -77,10 +77,20 @@ class TestHolleyPlugin:
         assert plugin.map_interaction_weight("Placed Order") == 5.0
         assert plugin.map_interaction_weight("unknown") is None
 
-    def test_fallback_tiers(self):
+    def test_fallback_tiers_default(self):
         plugin = HolleyPlugin()
         tiers = plugin.fallback_tiers({})
         assert tiers == [FallbackTier.ENTITY, FallbackTier.ENTITY_GROUP, FallbackTier.GLOBAL]
+
+    def test_fallback_tiers_3node_explicit(self):
+        plugin = HolleyPlugin()
+        tiers = plugin.fallback_tiers({"topology": "user-entity-product"})
+        assert tiers == [FallbackTier.ENTITY, FallbackTier.ENTITY_GROUP, FallbackTier.GLOBAL]
+
+    def test_fallback_tiers_2node(self):
+        plugin = HolleyPlugin()
+        tiers = plugin.fallback_tiers({"topology": "user-product"})
+        assert tiers == [FallbackTier.GLOBAL]
 
     def test_go_no_go_thresholds(self):
         plugin = HolleyPlugin()

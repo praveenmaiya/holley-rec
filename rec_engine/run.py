@@ -184,22 +184,7 @@ def mode_train(
     id_mappings = _build_id_mappings(dataframes, config)
 
     # Build graph
-    nodes = {
-        "users": dataframes["users"],
-        "products": dataframes["products"],
-    }
-    edges = {
-        "interactions": dataframes["interactions"],
-    }
-    if "entities" in dataframes:
-        nodes["entities"] = dataframes["entities"]
-    if "fitment" in dataframes:
-        edges["fitment"] = dataframes["fitment"]
-    if "ownership" in dataframes:
-        edges["ownership"] = dataframes["ownership"]
-    if "copurchase" in dataframes:
-        edges["copurchase"] = dataframes["copurchase"]
-
+    nodes, edges = _prepare_graph_inputs(dataframes)
     data, split_masks, metadata = build_hetero_graph(nodes, edges, id_mappings, config)
 
     # Build test interactions
@@ -288,39 +273,12 @@ def mode_evaluate(
             )
         # Build fresh from dataframes
         id_mappings = _build_id_mappings(dataframes, config)
-        nodes = {"users": dataframes["users"], "products": dataframes["products"]}
-        edges = {"interactions": dataframes["interactions"]}
-        if "entities" in dataframes:
-            nodes["entities"] = dataframes["entities"]
-        if "fitment" in dataframes:
-            edges["fitment"] = dataframes["fitment"]
-        if "ownership" in dataframes:
-            edges["ownership"] = dataframes["ownership"]
-        if "copurchase" in dataframes:
-            edges["copurchase"] = dataframes["copurchase"]
-
+        nodes, edges = _prepare_graph_inputs(dataframes)
         data, split_masks, metadata = build_hetero_graph(nodes, edges, id_mappings, config)
 
-        entity_type_name = config.get("entity", {}).get("type_name", "entity")
-        n_entities = len(id_mappings.get("entity_to_id", {}))
-        edge_types = strategy.get_edge_types(config)
-
-        model = build_model(
-            n_users=data["user"].num_nodes,
-            n_products=data["product"].num_nodes,
-            n_entities=n_entities,
-            n_categories=metadata["n_categories"],
-            edge_types=edge_types,
-            config=config,
-            entity_type_name=entity_type_name,
-            product_num_features=metadata["product_num_features"],
-            entity_num_features=metadata.get("entity_num_features", 0),
+        model = _load_model_from_checkpoint(
+            model_checkpoint, data, id_mappings, metadata, strategy, config,
         )
-
-        import torch
-        checkpoint_data = torch.load(model_checkpoint, map_location="cpu", weights_only=False)
-        model.load_state_dict(checkpoint_data["model_state_dict"])
-        logger.info("Loaded model from checkpoint: %s", model_checkpoint)
 
     test_df = dataframes.get("test_interactions", pd.DataFrame())
 
@@ -377,39 +335,12 @@ def mode_score(
                 "Scoring with an untrained model would produce meaningless results."
             )
         id_mappings = _build_id_mappings(dataframes, config)
-        nodes = {"users": dataframes["users"], "products": dataframes["products"]}
-        edges = {"interactions": dataframes["interactions"]}
-        if "entities" in dataframes:
-            nodes["entities"] = dataframes["entities"]
-        if "fitment" in dataframes:
-            edges["fitment"] = dataframes["fitment"]
-        if "ownership" in dataframes:
-            edges["ownership"] = dataframes["ownership"]
-        if "copurchase" in dataframes:
-            edges["copurchase"] = dataframes["copurchase"]
-
+        nodes, edges = _prepare_graph_inputs(dataframes)
         data, _, metadata = build_hetero_graph(nodes, edges, id_mappings, config)
 
-        entity_type_name = config.get("entity", {}).get("type_name", "entity")
-        n_entities = len(id_mappings.get("entity_to_id", {}))
-        edge_types = strategy.get_edge_types(config)
-
-        model = build_model(
-            n_users=data["user"].num_nodes,
-            n_products=data["product"].num_nodes,
-            n_entities=n_entities,
-            n_categories=metadata["n_categories"],
-            edge_types=edge_types,
-            config=config,
-            entity_type_name=entity_type_name,
-            product_num_features=metadata["product_num_features"],
-            entity_num_features=metadata.get("entity_num_features", 0),
+        model = _load_model_from_checkpoint(
+            model_checkpoint, data, id_mappings, metadata, strategy, config,
         )
-
-        import torch
-        checkpoint_data = torch.load(model_checkpoint, map_location="cpu", weights_only=False)
-        model.load_state_dict(checkpoint_data["model_state_dict"])
-        logger.info("Loaded model from checkpoint: %s", model_checkpoint)
 
     # Normalize runtime inputs conditionally: keep IDs already in graph,
     # normalize only unknown raw IDs, drop unresolvable ones.
@@ -491,6 +422,70 @@ def mode_score(
     logger.info("Scoring complete: %d users scored", len(df))
 
     return df
+
+
+def _load_model_from_checkpoint(
+    checkpoint_path: str,
+    data: Any,
+    id_mappings: dict[str, dict],
+    metadata: dict[str, Any],
+    strategy: Any,
+    config: dict[str, Any],
+) -> Any:
+    """Load a trained HeteroGAT model from a checkpoint file.
+
+    Security note: uses weights_only=False because checkpoints contain both
+    model_state_dict (tensors) and config (plain dict). This allows arbitrary
+    code execution via pickle — only load checkpoints from trusted sources.
+    Revisit for multi-tenant deployment (Phase 4).
+    """
+    import torch
+
+    entity_type_name = config.get("entity", {}).get("type_name", "entity")
+    n_entities = len(id_mappings.get("entity_to_id", {}))
+    edge_types = strategy.get_edge_types(config)
+
+    model = build_model(
+        n_users=data["user"].num_nodes,
+        n_products=data["product"].num_nodes,
+        n_entities=n_entities,
+        n_categories=metadata["n_categories"],
+        edge_types=edge_types,
+        config=config,
+        entity_type_name=entity_type_name,
+        product_num_features=metadata["product_num_features"],
+        entity_num_features=metadata.get("entity_num_features", 0),
+    )
+
+    checkpoint_data = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    model.load_state_dict(checkpoint_data["model_state_dict"])
+    logger.info("Loaded model from checkpoint: %s", checkpoint_path)
+    return model
+
+
+def _prepare_graph_inputs(
+    dataframes: dict[str, Any],
+) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
+    """Extract node and edge DataFrames from canonical dataframes dict.
+
+    Returns (nodes, edges) ready for build_hetero_graph.
+    """
+    nodes: dict[str, pd.DataFrame] = {
+        "users": dataframes["users"],
+        "products": dataframes["products"],
+    }
+    edges: dict[str, pd.DataFrame] = {
+        "interactions": dataframes["interactions"],
+    }
+    if "entities" in dataframes:
+        nodes["entities"] = dataframes["entities"]
+    if "fitment" in dataframes:
+        edges["fitment"] = dataframes["fitment"]
+    if "ownership" in dataframes:
+        edges["ownership"] = dataframes["ownership"]
+    if "copurchase" in dataframes:
+        edges["copurchase"] = dataframes["copurchase"]
+    return nodes, edges
 
 
 def _build_id_mappings(

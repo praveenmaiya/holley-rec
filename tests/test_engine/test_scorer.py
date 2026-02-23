@@ -218,6 +218,53 @@ class TestGNNScorerWithPurchaseExclusion:
         assert len(scorer.user_excluded_products["user_0"]) > 0
 
 
+class TestScorerMinimalColumns:
+    """I-2: Scorer must work with only contract-required columns (no name/url/image_url)."""
+
+    def test_scorer_with_minimal_product_columns(self, small_graph_2node, config_2node):
+        """Products DataFrame with only required columns must not crash."""
+        data, _, mappings, meta = small_graph_2node
+        strategy = create_strategy(config_2node)
+        plugin = DefaultPlugin(salt="test")
+        entity_type_name = config_2node.get("entity", {}).get("type_name", "entity")
+        n_entities = len(mappings.get("entity_to_id", {}))
+        edge_types = strategy.get_edge_types(config_2node)
+
+        model = HeteroGAT(
+            n_users=data["user"].num_nodes,
+            n_products=data["product"].num_nodes,
+            n_entities=n_entities,
+            n_categories=meta["n_categories"],
+            edge_types=edge_types,
+            config=config_2node,
+            entity_type_name=entity_type_name,
+            product_num_features=meta["product_num_features"],
+            entity_num_features=meta.get("entity_num_features", 0),
+        )
+
+        # Minimal product DataFrame — only contract-required columns
+        minimal_products = pd.DataFrame({
+            "product_id": [f"prod_{i}" for i in range(20)],
+            "price": [50.0 + i * 10 for i in range(20)],
+            "popularity": [float(20 - i) for i in range(20)],
+        })
+
+        scorer = GNNScorer(
+            model=model,
+            data=data,
+            id_mappings=mappings,
+            nodes={"products": minimal_products},
+            config=config_2node,
+            strategy=strategy,
+            plugin=plugin,
+        )
+        target = {f"user_{i}" for i in range(10)}
+        df = scorer.score_all_users(target_user_ids=target)
+        assert len(df) > 0
+        # name/url/image_url should default to empty strings
+        assert df["rec1_name"].iloc[0] == ""
+
+
 class TestQAChecks:
     def test_qa_passes_on_valid_data(self, small_graph_2node, config_2node):
         data, _, mappings, meta = small_graph_2node

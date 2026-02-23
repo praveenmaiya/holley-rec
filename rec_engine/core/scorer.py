@@ -102,19 +102,33 @@ class GNNScorer:
         self.product_meta: dict[str, dict] = {}
         self.category_by_product_id: dict[int, str] = {}
 
-        for _, row in products_df.iterrows():
-            pid_str = row.get("product_id", "")
+        # Vectorized: extract columns as arrays, iterate once via zip
+        # Optional columns default to empty string if missing from DataFrame
+        n = len(products_df)
+        _empty = np.full(n, "", dtype=object)
+        _zero = np.zeros(n)
+
+        pids_arr = products_df["product_id"].fillna("").to_numpy()
+        prices_arr = products_df["price"].fillna(0).to_numpy() if "price" in products_df.columns else _zero
+        cats_arr = products_df[category_col].fillna("").to_numpy() if category_col in products_df.columns else _empty
+        names_arr = products_df["name"].fillna("").to_numpy() if "name" in products_df.columns else _empty
+        urls_arr = products_df["url"].fillna("").to_numpy() if "url" in products_df.columns else _empty
+        imgs_arr = products_df["image_url"].fillna("").to_numpy() if "image_url" in products_df.columns else _empty
+
+        for i in range(len(pids_arr)):
+            pid_str = str(pids_arr[i])
+            cat = str(cats_arr[i])
             self.product_meta[pid_str] = {
                 "product_id": pid_str,
-                "price": row.get("price", 0),
-                "category": row.get(category_col, ""),
-                "name": row.get("name", ""),
-                "url": row.get("url", ""),
-                "image_url": row.get("image_url", ""),
+                "price": prices_arr[i],
+                "category": cat,
+                "name": str(names_arr[i]),
+                "url": str(urls_arr[i]),
+                "image_url": str(imgs_arr[i]),
             }
             pid = product_to_id.get(pid_str)
             if pid is not None:
-                self.category_by_product_id[pid] = str(row.get(category_col, ""))
+                self.category_by_product_id[pid] = cat
 
     def _build_entity_groups(self):
         """Build entity -> (user_ids, product_ids) mappings from graph."""
@@ -142,10 +156,12 @@ class GNNScorer:
         if group_col and "entities" in self.nodes:
             entities_df = self.nodes["entities"]
             entity_to_id_map = self.id_mappings.get("entity_to_id", {})
-            for _, row in entities_df.iterrows():
-                eid = entity_to_id_map.get(row.get("entity_id"))
+            eids_arr = entities_df["entity_id"].to_numpy()
+            groups_arr = entities_df[group_col].fillna("").to_numpy() if group_col in entities_df.columns else np.full(len(entities_df), "", dtype=object)
+            for raw_eid, grp in zip(eids_arr, groups_arr):
+                eid = entity_to_id_map.get(raw_eid)
                 if eid is not None:
-                    self.entity_to_group[eid] = str(row.get(group_col, ""))
+                    self.entity_to_group[eid] = str(grp)
 
     def _build_purchase_exclusions(self, user_purchases: dict[str, set[str]]):
         """Build user_id -> set of purchased product_ids for exclusion.
@@ -217,10 +233,12 @@ class GNNScorer:
         pop_col = self.config.get("columns", {}).get("popularity", "popularity")
 
         self.product_popularity: dict[int, float] = {}
-        for _, row in products_df.iterrows():
-            pid = product_to_id.get(row.get("product_id"))
+        pids_arr = products_df["product_id"].to_numpy()
+        pops_arr = products_df[pop_col].fillna(0.0).to_numpy() if pop_col in products_df.columns else np.zeros(len(products_df))
+        for raw_pid, pop in zip(pids_arr, pops_arr):
+            pid = product_to_id.get(raw_pid)
             if pid is not None:
-                self.product_popularity[pid] = float(row.get(pop_col, 0.0))
+                self.product_popularity[pid] = float(pop)
 
         # Entity-level fitment by popularity
         self.entity_fitment_by_popularity: dict[int, list[int]] = {}
@@ -237,9 +255,11 @@ class GNNScorer:
             entities_df = self.nodes["entities"]
             entity_to_id_map = self.id_mappings.get("entity_to_id", {})
             group_products: dict[str, set[int]] = {}
-            for _, erow in entities_df.iterrows():
-                group = str(erow.get(group_col, ""))
-                eid = entity_to_id_map.get(erow.get("entity_id"))
+            eids_arr = entities_df["entity_id"].to_numpy()
+            groups_arr = entities_df[group_col].fillna("").to_numpy() if group_col in entities_df.columns else np.full(len(entities_df), "", dtype=object)
+            for raw_eid, grp in zip(eids_arr, groups_arr):
+                group = str(grp)
+                eid = entity_to_id_map.get(raw_eid)
                 if eid is not None:
                     prods = self.entity_fitment_by_popularity.get(eid, [])
                     group_products.setdefault(group, set()).update(prods)
@@ -643,16 +663,19 @@ class GNNScorer:
         if not fallback_rows.empty:
             sm = fallback_rows[score_cols].to_numpy(dtype=np.float64, copy=False)
             fb_idx = fallback_rows["fallback_start_idx"].to_numpy(dtype=int)
-            for i, row_scores in enumerate(sm):
+            prefix_violated = False
+            for i in range(len(sm)):
                 prefix_len = fb_idx[i]
-                for j in range(prefix_len - 1):
-                    if not np.isnan(row_scores[j]) and not np.isnan(row_scores[j + 1]):
-                        if row_scores[j] < row_scores[j + 1]:
-                            failures.append("Score ordering violated (GNN prefix in fallback rows)")
-                            break
-                else:
+                if prefix_len < 2:
                     continue
-                break
+                prefix = sm[i, :prefix_len]
+                left, right = prefix[:-1], prefix[1:]
+                mask = ~np.isnan(left) & ~np.isnan(right)
+                if mask.any() and np.any(left[mask] < right[mask]):
+                    prefix_violated = True
+                    break
+            if prefix_violated:
+                failures.append("Score ordering violated (GNN prefix in fallback rows)")
 
         if failures:
             for f in failures:

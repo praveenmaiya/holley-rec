@@ -3,10 +3,18 @@
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
 from plugins.defaults import DefaultPlugin
 from rec_engine import is_valid_scalar
-from rec_engine.run import load_plugin, mode_evaluate, mode_score, mode_train, preprocess_dataframes
+from rec_engine.run import (
+    _load_model_from_checkpoint,
+    load_plugin,
+    mode_evaluate,
+    mode_score,
+    mode_train,
+    preprocess_dataframes,
+)
 
 
 class TestIsValidScalar:
@@ -430,3 +438,136 @@ class TestModeScore:
                 train_result=train_result,
                 user_purchases=[("uid", {"pid"})],
             )
+
+
+class TestEndToEnd3Node:
+    """I5: Integration test for 3-node topology through full pipeline."""
+
+    def test_train_evaluate_score_3node(self, all_dataframes_3node, config_3node):
+        """Full train → evaluate → score for user-entity-product topology."""
+        plugin = DefaultPlugin(salt="test-3node")
+
+        # Train
+        train_result = mode_train(config_3node, all_dataframes_3node, plugin)
+        assert "model" in train_result
+        assert "data" in train_result
+        assert train_result["strategy"].is_entity_topology
+
+        # Evaluate
+        eval_result = mode_evaluate(
+            config_3node, all_dataframes_3node, plugin,
+            train_result=train_result,
+        )
+        assert "go_no_go" in eval_result
+        assert eval_result["go_no_go"]["decision"] in {"GO", "MAYBE", "SKIP", "INVESTIGATE"}
+
+        # Score all users
+        df = mode_score(
+            config_3node, all_dataframes_3node, plugin,
+            train_result=train_result,
+        )
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) > 0
+        assert "user_id" in df.columns
+        assert "rec1_product_id" in df.columns
+        # Every scored user should have at least rec1 filled
+        assert df["rec1_product_id"].notna().all()
+
+    def test_score_with_target_users_3node(self, all_dataframes_3node, config_3node):
+        """Score a subset of users in 3-node topology."""
+        plugin = DefaultPlugin(salt="test-3node")
+        train_result = mode_train(config_3node, all_dataframes_3node, plugin)
+        # Target first 3 raw user IDs
+        df = mode_score(
+            config_3node, all_dataframes_3node, plugin,
+            train_result=train_result,
+            target_user_ids={"user_0", "user_1", "user_2"},
+        )
+        assert len(df) == 3
+
+    def test_score_with_purchase_exclusion_3node(self, all_dataframes_3node, config_3node):
+        """Purchase exclusion works with 3-node entity-grouped scoring."""
+        plugin = DefaultPlugin(salt="test-3node")
+        train_result = mode_train(config_3node, all_dataframes_3node, plugin)
+        product_to_id = train_result["id_mappings"]["product_to_id"]
+        canonical_pids = sorted(product_to_id.keys())
+        canon_uid = plugin.normalize_user_id("user_0")
+        purchased = {canonical_pids[0], canonical_pids[1]}
+        df = mode_score(
+            config_3node, all_dataframes_3node, plugin,
+            train_result=train_result,
+            user_purchases={canon_uid: purchased},
+            target_user_ids={canon_uid},
+        )
+        assert len(df) == 1
+        rec_pids = set()
+        for i in range(1, config_3node["scoring"]["total_slots"] + 1):
+            val = df[f"rec{i}_product_id"].iloc[0]
+            if pd.notna(val):
+                rec_pids.add(val)
+        for pid in purchased:
+            deduped = plugin.dedup_variant(pid)
+            assert deduped not in rec_pids
+
+
+class TestCheckpointRoundTrip:
+    """Codex M2: Positive-path test for _load_model_from_checkpoint."""
+
+    def test_checkpoint_round_trip_2node(self, all_dataframes_2node, config_2node, tmp_path):
+        """Train → save → load → verify identical embeddings (2-node)."""
+        plugin = DefaultPlugin(salt="test-ckpt")
+        train_result = mode_train(config_2node, all_dataframes_2node, plugin)
+        model = train_result["model"]
+        data = train_result["data"]
+
+        # Save checkpoint (matches format expected by _load_model_from_checkpoint)
+        ckpt_path = str(tmp_path / "model.pt")
+        torch.save({"model_state_dict": model.state_dict()}, ckpt_path)
+
+        # Load via the helper
+        loaded_model = _load_model_from_checkpoint(
+            ckpt_path,
+            data,
+            train_result["id_mappings"],
+            train_result["metadata"],
+            train_result["strategy"],
+            config_2node,
+        )
+
+        # Both models should produce identical embeddings
+        model.eval()
+        loaded_model.eval()
+        with torch.no_grad():
+            orig_user, orig_prod = model(data)
+            loaded_user, loaded_prod = loaded_model(data)
+
+        assert torch.allclose(orig_user, loaded_user, atol=1e-6), "User embedding mismatch"
+        assert torch.allclose(orig_prod, loaded_prod, atol=1e-6), "Product embedding mismatch"
+
+    def test_checkpoint_round_trip_3node(self, all_dataframes_3node, config_3node, tmp_path):
+        """Train → save → load → verify identical embeddings (3-node)."""
+        plugin = DefaultPlugin(salt="test-ckpt")
+        train_result = mode_train(config_3node, all_dataframes_3node, plugin)
+        model = train_result["model"]
+        data = train_result["data"]
+
+        ckpt_path = str(tmp_path / "model.pt")
+        torch.save({"model_state_dict": model.state_dict()}, ckpt_path)
+
+        loaded_model = _load_model_from_checkpoint(
+            ckpt_path,
+            data,
+            train_result["id_mappings"],
+            train_result["metadata"],
+            train_result["strategy"],
+            config_3node,
+        )
+
+        model.eval()
+        loaded_model.eval()
+        with torch.no_grad():
+            orig_user, orig_prod = model(data)
+            loaded_user, loaded_prod = loaded_model(data)
+
+        assert torch.allclose(orig_user, loaded_user, atol=1e-6), "User embedding mismatch"
+        assert torch.allclose(orig_prod, loaded_prod, atol=1e-6), "Product embedding mismatch"

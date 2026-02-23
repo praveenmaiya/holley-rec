@@ -55,7 +55,9 @@ class HolleyPlugin(RecEnginePlugin):
         return weights.get(interaction_type)
 
     def fallback_tiers(self, user_context: dict) -> list[FallbackTier]:
-        """Holley uses vehicle → make → global (3-tier)."""
+        """Holley uses vehicle → make → global (3-tier) for entity topology."""
+        if user_context.get("topology") == "user-product":
+            return [FallbackTier.GLOBAL]
         return [FallbackTier.ENTITY, FallbackTier.ENTITY_GROUP, FallbackTier.GLOBAL]
 
     def get_go_no_go_thresholds(self) -> dict[str, float]:

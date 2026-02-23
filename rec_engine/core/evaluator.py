@@ -58,12 +58,13 @@ class GNNEvaluator:
         # Build product metadata
         # H4: Use graph tensor for excluded set (same source as scorer)
         excluded_mask = getattr(self.data["product"], "is_excluded", None)
+        self.excluded_product_ids: frozenset[int]
         if excluded_mask is not None:
-            self.excluded_product_ids: frozenset[int] = frozenset(
+            self.excluded_product_ids = frozenset(
                 excluded_mask.nonzero(as_tuple=True)[0].detach().cpu().tolist()
             )
         else:
-            self.excluded_product_ids: frozenset[int] = frozenset()
+            self.excluded_product_ids = frozenset()
 
         self.category_by_product_id: dict[int, str] = {}
         category_col = config.get("columns", {}).get("category", "category")
