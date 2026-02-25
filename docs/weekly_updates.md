@@ -1,3 +1,12 @@
+**Weekly Update — Feb 24, 2026 (2 weeks)**
+
+*   **A/B Test Validates Relevance, Exposes Revenue Gap (Holley):** A burst test confirmed Personalized Vehicle Fitment recommendations drive significantly more clicks than static product highlights — nearly 3x higher click-through rate, statistically significant. However, click-to-purchase conversion was near-zero for both arms. The email drives interest but isn't closing sales, pointing to a landing page or product experience gap downstream.
+*   **Fitment-Only Recommendations Deployed (Holley):** An employee complaint revealed universal (non-fitting) products were appearing in recommendations for over half of users — the scoring algorithm let broadly popular items outscore vehicle-specific parts. Rebuilt the pipeline to only recommend products that actually fit the user's vehicle, with purchase-based popularity scoring and a 3-tier fallback for coverage. Deployed to staging with updated architecture docs and client implementation guide.
+*   **Graph Neural Network Recommendation Engine (Holley → Platform):** Built a GNN-based recommendation system that learns relationships between users, vehicles, and products using graph attention networks. The Holley-specific implementation is merged to mainline. Then generalized the engine into a multi-client plugin architecture ready for the shared ML platform — future clients plug in their own data and config without touching the core engine. Deployment skeleton for Metaflow integration is designed and ready to build.
+*   **Next:** Deploy the GNN engine to the shared Metaflow platform and run end-to-end training on real Holley data. Validate model quality against the current SQL pipeline baseline.
+
+---
+
 **Weekly Update - Jan 20, 2026**
 
 *   **ML Pipeline Ownership (Metaflow):** Deep-dived into the full model training-to-production chain — from Metaflow flows running on Kubernetes, to Docker images pushed to Artifact Registry, to PostgreSQL model_config registration that the prediction service reads. This end-to-end understanding unlocks the ability to independently train, deploy, and troubleshoot ML models without relying on the ML platform team for every change.
