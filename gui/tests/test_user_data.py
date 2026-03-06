@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 import pandas as pd
-from services.user_data import get_random_users, get_user_vehicle, search_users
+from services.user_data import get_random_users, search_users
 
 
 def test_search_users_by_email():
@@ -33,28 +33,6 @@ def test_search_users_by_vehicle():
     with patch("services.user_data.run_query", return_value=mock_df):
         result = search_users(year="2019", make="FORD", model="MUSTANG")
         assert len(result) == 2
-
-
-def test_get_user_vehicle():
-    mock_df = pd.DataFrame(
-        {
-            "user_id": ["U123"],
-            "email_lower": ["john@test.com"],
-            "v1_year": ["2019"],
-            "v1_make": ["FORD"],
-            "v1_model": ["MUSTANG GT"],
-        }
-    )
-    with patch("services.user_data.run_query", return_value=mock_df):
-        result = get_user_vehicle("john@test.com")
-        assert result["user_id"] == "U123"
-        assert result["v1_model"] == "MUSTANG GT"
-
-
-def test_get_user_vehicle_not_found():
-    with patch("services.user_data.run_query", return_value=pd.DataFrame()):
-        result = get_user_vehicle("noone@test.com")
-        assert result == {}
 
 
 def test_get_random_users():

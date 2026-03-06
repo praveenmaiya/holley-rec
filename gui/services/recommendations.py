@@ -4,7 +4,7 @@ import pandas as pd
 
 from services.bq_client import run_query
 
-_RECS_TABLE = "auxia-reporting.company_1950_jp.final_vehicle_recommendations"
+_RECS_TABLE = "auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations"
 
 
 def get_user_recommendations(email_lower: str) -> list[dict]:
