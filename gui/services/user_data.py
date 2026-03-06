@@ -6,15 +6,16 @@ from services.bq_client import run_query
 
 _RECS_TABLE = "auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations"
 
-# Resolve email → user_id via attributes pivot (needed for email events lookup)
+# Resolve email → user_id (one per email, needed for email events lookup)
 _USER_ID_SQL = """
 SELECT
-  u.user_id,
+  ANY_VALUE(u.user_id) AS user_id,
   LOWER(TRIM(p.string_value)) AS email_lower
 FROM `auxia-gcp.company_1950.ingestion_unified_attributes_schema_incremental` u,
   UNNEST(user_properties) AS p
 WHERE LOWER(p.property_name) = 'email'
   AND p.string_value IS NOT NULL
+GROUP BY email_lower
 """
 
 # Columns to select from recs table (includes images for list view thumbnails)

@@ -1,20 +1,32 @@
-"""Render the scrollable user list with recommendation thumbnails."""
+"""Render the scrollable user list with vehicle image + recommendation thumbnails."""
 
 import pandas as pd
 import streamlit as st
+from services.vehicle_images import get_vehicle_image
 
 
 def render_user_list(results: pd.DataFrame):
-    """Render a scrollable list of users with rec thumbnails. Returns selected email or None."""
+    """Render a scrollable list of users with vehicle image and rec thumbnails."""
     st.subheader(f"Users ({len(results)})")
 
     for idx, row in results.iterrows():
         email = row["email_lower"]
-        vehicle = f"{row['v1_year']} {row['v1_make']} {row['v1_model']}"
+        year = str(row["v1_year"])
+        make = str(row["v1_make"])
+        model = str(row["v1_model"])
+        vehicle = f"{year} {make} {model}"
+        vehicle_img = get_vehicle_image(year, make, model)
 
         with st.container():
-            top_col, btn_col = st.columns([5, 1])
-            with top_col:
+            # Vehicle image + info + View button
+            if vehicle_img:
+                img_col, info_col, btn_col = st.columns([1, 4, 1])
+                with img_col:
+                    st.image(vehicle_img, width=120)
+            else:
+                info_col, btn_col = st.columns([5, 1])
+
+            with info_col:
                 st.markdown(f"**{vehicle}**  \n`{email}`")
             with btn_col:
                 if st.button("View →", key=f"view_{idx}"):

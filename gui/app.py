@@ -8,6 +8,7 @@ from services.emails import get_email_events
 from services.purchases import get_purchase_history
 from services.recommendations import get_user_recommendations
 from services.user_data import get_random_users, search_users
+from services.vehicle_images import get_vehicle_image
 
 st.set_page_config(
     page_title="Holley Rec Explorer",
@@ -37,12 +38,23 @@ def _show_detail():
         st.error(f"User {email} not found in results.")
         return
 
-    # Vehicle header
-    vehicle_str = (
-        f"{user.get('v1_year', '?')} {user.get('v1_make', '?')} {user.get('v1_model', '?')}"
-    )
-    st.header(f"🚗 {vehicle_str}")
-    st.caption(f"User ID: `{user.get('user_id', 'N/A')}` | Email: `{email}`")
+    # Vehicle header with image
+    year = user.get("v1_year", "?")
+    make = user.get("v1_make", "?")
+    model = user.get("v1_model", "?")
+    vehicle_str = f"{year} {make} {model}"
+    vehicle_img = get_vehicle_image(str(year), str(make), str(model))
+
+    if vehicle_img:
+        img_col, hdr_col = st.columns([1, 4])
+        with img_col:
+            st.image(vehicle_img, width=200)
+        with hdr_col:
+            st.header(f"🚗 {vehicle_str}")
+            st.caption(f"User ID: `{user.get('user_id', 'N/A')}` | Email: `{email}`")
+    else:
+        st.header(f"🚗 {vehicle_str}")
+        st.caption(f"User ID: `{user.get('user_id', 'N/A')}` | Email: `{email}`")
 
     # Fetch all data
     with st.spinner("Loading recommendations..."):
