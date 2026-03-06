@@ -17,13 +17,25 @@ WHERE LOWER(p.property_name) = 'email'
   AND p.string_value IS NOT NULL
 """
 
+# Columns to select from recs table (includes images for list view thumbnails)
+_REC_COLS = """
+  r.email_lower,
+  r.v1_year,
+  UPPER(r.v1_make) AS v1_make,
+  UPPER(r.v1_model) AS v1_model,
+  r.rec_part_1, r.rec1_price, r.rec1_image,
+  r.rec_part_2, r.rec2_price, r.rec2_image,
+  r.rec_part_3, r.rec3_price, r.rec3_image,
+  r.rec_part_4, r.rec4_price, r.rec4_image
+"""
+
 
 def search_users(
     email: str | None = None,
     year: str | None = None,
     make: str | None = None,
     model: str | None = None,
-    limit: int = 50,
+    limit: int = 25,
 ) -> pd.DataFrame:
     """Search VFU users by email or vehicle. Queries recs table directly."""
     conditions = []
@@ -42,10 +54,7 @@ def search_users(
     WITH uid AS ({_USER_ID_SQL})
     SELECT
       uid.user_id,
-      r.email_lower,
-      r.v1_year,
-      UPPER(r.v1_make) AS v1_make,
-      UPPER(r.v1_model) AS v1_model
+      {_REC_COLS}
     FROM `{_RECS_TABLE}` r
     LEFT JOIN uid ON r.email_lower = uid.email_lower
     WHERE {where}
@@ -54,7 +63,7 @@ def search_users(
     return run_query(query)
 
 
-def get_random_users(n: int = 10, buyers_only: bool = False) -> pd.DataFrame:
+def get_random_users(n: int = 25, buyers_only: bool = False) -> pd.DataFrame:
     """Get random VFU users, optionally filtered to buyers."""
     buyer_join = ""
     if buyers_only:
@@ -70,10 +79,7 @@ def get_random_users(n: int = 10, buyers_only: bool = False) -> pd.DataFrame:
     WITH uid AS ({_USER_ID_SQL})
     SELECT
       uid.user_id,
-      r.email_lower,
-      r.v1_year,
-      UPPER(r.v1_make) AS v1_make,
-      UPPER(r.v1_model) AS v1_model
+      {_REC_COLS}
     FROM `{_RECS_TABLE}` r
     LEFT JOIN uid ON r.email_lower = uid.email_lower
     {buyer_join}
