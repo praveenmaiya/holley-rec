@@ -86,7 +86,7 @@ SELECT
   COUNTIF(LOWER(it.Tags) LIKE '%refurbished%') as refurbished_count
 FROM all_recommended_skus rs
 LEFT JOIN (
-  SELECT UPPER(TRIM(PartNumber)) as PartNumber, MAX(Tags) as Tags
+  SELECT REGEXP_REPLACE(UPPER(TRIM(PartNumber)), r'([0-9])[BRGP]$', r'\1') as PartNumber, MAX(Tags) as Tags
   FROM `auxia-gcp.data_company_1950.import_items`
   GROUP BY PartNumber
 ) it ON rs.sku = it.PartNumber;
@@ -154,9 +154,9 @@ FROM all_images;
 
 
 -- ============================================================================
--- CHECK 6: Score Ordering (Monotonic Decrease)
+-- CHECK 6: Score Ordering (Monotonic Decrease) [I7 CRITICAL]
 -- ============================================================================
--- Expected: correct_ordering_pct = 100%
+-- Expected: violations = 0, correct_ordering_pct = 100%
 -- Handles NULL rec4 for 3-rec users
 SELECT
   COUNT(*) as total_users,
@@ -165,6 +165,11 @@ SELECT
     rec2_score >= rec3_score AND
     (rec4_score IS NULL OR rec3_score >= rec4_score)
   ) as correctly_ordered,
+  COUNTIF(NOT (
+    rec1_score >= rec2_score AND
+    rec2_score >= rec3_score AND
+    (rec4_score IS NULL OR rec3_score >= rec4_score)
+  )) as violations,
   ROUND(
     COUNTIF(rec1_score >= rec2_score AND rec2_score >= rec3_score AND
             (rec4_score IS NULL OR rec3_score >= rec4_score))
@@ -193,7 +198,7 @@ user_parttype_counts AS (
     COUNT(*) as parttype_count
   FROM user_recs_long ur
   LEFT JOIN (
-    SELECT UPPER(TRIM(PartNumber)) as PartNumber, MAX(PartType) as PartType
+    SELECT REGEXP_REPLACE(UPPER(TRIM(PartNumber)), r'([0-9])[BRGP]$', r'\1') as PartNumber, MAX(PartType) as PartType
     FROM `auxia-gcp.data_company_1950.import_items`
     GROUP BY PartNumber
   ) it ON ur.sku = it.PartNumber
@@ -206,25 +211,30 @@ FROM user_parttype_counts;
 
 
 -- ============================================================================
--- CHECK 7b: Fitment Count Distribution
+-- CHECK 7b: Fitment Count = Filled Slots [I6 CRITICAL]
 -- ============================================================================
--- Expected: fitment_count is 3 or 4 for all users
+-- Expected: fitment_count is 3 or 4; must match actual non-null rec_part_* count
 SELECT
-  'fitment_count_distribution' AS check_name,
+  'fitment_count_check' AS check_name,
   COUNTIF(fitment_count = 3) AS with_3_recs,
   COUNTIF(fitment_count = 4) AS with_4_recs,
-  COUNTIF(fitment_count NOT IN (3, 4)) AS unexpected_count,
+  COUNTIF(fitment_count NOT IN (3, 4)) AS invalid_values,
+  COUNTIF(fitment_count = 3 AND rec_part_4 IS NOT NULL) AS miscount_3,
+  COUNTIF(fitment_count = 4 AND rec_part_4 IS NULL) AS miscount_4,
   ROUND(AVG(fitment_count), 2) AS avg_fitment_count
 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
 
 
 -- ============================================================================
--- CHECK 7c: Engagement Tier Distribution
+-- CHECK 7c: Engagement Tier Binary Hot/Cold [I10 CRITICAL]
 -- ============================================================================
+-- Expected: only "hot" and "cold", no NULLs, no other values
 SELECT
-  'engagement_tier_distribution' AS check_name,
+  'engagement_tier_check' AS check_name,
   COUNTIF(engagement_tier = 'hot') AS hot_users,
   COUNTIF(engagement_tier = 'cold') AS cold_users,
+  COUNTIF(engagement_tier IS NULL) AS null_users,
+  COUNTIF(engagement_tier NOT IN ('hot', 'cold')) AS invalid_values,
   COUNT(*) AS total_users
 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
 
@@ -265,7 +275,7 @@ SELECT
   END AS status
 FROM all_skus s
 LEFT JOIN (
-  SELECT UPPER(TRIM(PartNumber)) AS PartNumber, MAX(PartType) AS PartType
+  SELECT REGEXP_REPLACE(UPPER(TRIM(PartNumber)), r'([0-9])[BRGP]$', r'\1') AS PartNumber, MAX(PartType) AS PartType
   FROM `auxia-gcp.data_company_1950.import_items`
   GROUP BY PartNumber
 ) cat ON s.sku = cat.PartNumber;
@@ -299,7 +309,7 @@ fitment_map AS (
     SAFE_CAST(COALESCE(TRIM(fit.v1_year), CAST(fit.v1_year AS STRING)) AS INT64) AS v1_year,
     UPPER(TRIM(fit.v1_make)) AS v1_make,
     UPPER(TRIM(fit.v1_model)) AS v1_model,
-    UPPER(TRIM(prod.product_number)) AS sku
+    REGEXP_REPLACE(UPPER(TRIM(prod.product_number)), r'([0-9])[BRGP]$', r'\1') AS sku
   FROM `auxia-gcp.data_company_1950.vehicle_product_fitment_data` fit,
        UNNEST(fit.products) prod
   WHERE prod.product_number IS NOT NULL
@@ -323,6 +333,58 @@ LEFT JOIN fitment_map f
  AND r.v1_make = f.v1_make
  AND r.v1_model = f.v1_model
  AND r.sku = f.sku;
+
+
+-- ============================================================================
+-- CHECK 7g: No NULL Gaps Between Filled Slots [I8 CRITICAL]
+-- ============================================================================
+-- Expected: violations = 0
+-- A NULL slot must never be followed by a non-NULL slot.
+SELECT
+  'no_null_gaps_check' AS check_name,
+  COUNTIF(rec_part_2 IS NULL AND rec_part_3 IS NOT NULL) AS gap_at_slot_2,
+  COUNTIF(rec_part_3 IS NULL AND rec_part_4 IS NOT NULL) AS gap_at_slot_3,
+  COUNTIF(
+    (rec_part_2 IS NULL AND rec_part_3 IS NOT NULL) OR
+    (rec_part_3 IS NULL AND rec_part_4 IS NOT NULL)
+  ) AS total_violations
+FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
+
+
+-- ============================================================================
+-- CHECK 7h: No NULL/Empty Images in Filled Slots [I9 CRITICAL]
+-- ============================================================================
+-- Expected: violations = 0
+-- Every non-NULL rec_part_N must have a non-NULL, non-empty image URL.
+SELECT
+  'no_null_images_check' AS check_name,
+  COUNTIF(rec_part_1 IS NOT NULL AND (rec1_image IS NULL OR rec1_image = '')) AS slot1_violations,
+  COUNTIF(rec_part_2 IS NOT NULL AND (rec2_image IS NULL OR rec2_image = '')) AS slot2_violations,
+  COUNTIF(rec_part_3 IS NOT NULL AND (rec3_image IS NULL OR rec3_image = '')) AS slot3_violations,
+  COUNTIF(rec_part_4 IS NOT NULL AND (rec4_image IS NULL OR rec4_image = '')) AS slot4_violations,
+  COUNTIF(rec_part_1 IS NOT NULL AND (rec1_image IS NULL OR rec1_image = '')) +
+  COUNTIF(rec_part_2 IS NOT NULL AND (rec2_image IS NULL OR rec2_image = '')) +
+  COUNTIF(rec_part_3 IS NOT NULL AND (rec3_image IS NULL OR rec3_image = '')) +
+  COUNTIF(rec_part_4 IS NOT NULL AND (rec4_image IS NULL OR rec4_image = ''))
+  AS total_violations
+FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
+
+
+-- ============================================================================
+-- CHECK 7i: Slot 4 Consistency [I11]
+-- ============================================================================
+-- Expected: violations = 0
+-- If rec_part_4 is NULL, all rec4_* fields must also be NULL.
+SELECT
+  'slot4_consistency_check' AS check_name,
+  COUNTIF(
+    rec_part_4 IS NULL AND (
+      rec4_price IS NOT NULL OR rec4_score IS NOT NULL OR
+      rec4_image IS NOT NULL OR rec4_type IS NOT NULL OR
+      rec4_pop_source IS NOT NULL
+    )
+  ) AS violations
+FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
 
 
 -- ============================================================================
