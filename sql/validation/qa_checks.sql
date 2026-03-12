@@ -73,20 +73,20 @@ FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
 -- ============================================================================
 -- Expected: 0 refurbished SKUs
 WITH all_recommended_skus AS (
-  SELECT rec_part_1 as sku FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_1), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') as sku FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT rec_part_2 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_2), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT rec_part_3 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_3), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT rec_part_4 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations` WHERE rec_part_4 IS NOT NULL
+  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_4), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations` WHERE rec_part_4 IS NOT NULL
 )
 SELECT
   COUNT(*) as total_skus,
   COUNTIF(LOWER(it.Tags) LIKE '%refurbished%') as refurbished_count
 FROM all_recommended_skus rs
 LEFT JOIN (
-  SELECT REGEXP_REPLACE(UPPER(TRIM(PartNumber)), r'([0-9])[BRGP]$', r'\1') as PartNumber, MAX(Tags) as Tags
+  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(TRIM(PartNumber)), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') as PartNumber, MAX(Tags) as Tags
   FROM `auxia-gcp.data_company_1950.import_items`
   GROUP BY PartNumber
 ) it ON rs.sku = it.PartNumber;
@@ -183,13 +183,13 @@ FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
 -- ============================================================================
 -- Expected: max_same_parttype <= 2
 WITH user_recs_long AS (
-  SELECT email_lower, rec_part_1 as sku FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT email_lower, REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_1), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') as sku FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION ALL
-  SELECT email_lower, rec_part_2 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT email_lower, REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_2), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION ALL
-  SELECT email_lower, rec_part_3 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT email_lower, REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_3), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION ALL
-  SELECT email_lower, rec_part_4 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations` WHERE rec_part_4 IS NOT NULL
+  SELECT email_lower, REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_4), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations` WHERE rec_part_4 IS NOT NULL
 ),
 user_parttype_counts AS (
   SELECT
@@ -198,7 +198,7 @@ user_parttype_counts AS (
     COUNT(*) as parttype_count
   FROM user_recs_long ur
   LEFT JOIN (
-    SELECT REGEXP_REPLACE(UPPER(TRIM(PartNumber)), r'([0-9])[BRGP]$', r'\1') as PartNumber, MAX(PartType) as PartType
+    SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(TRIM(PartNumber)), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') as PartNumber, MAX(PartType) as PartType
     FROM `auxia-gcp.data_company_1950.import_items`
     GROUP BY PartNumber
   ) it ON ur.sku = it.PartNumber
@@ -260,13 +260,13 @@ FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
 -- ============================================================================
 -- Expected: >= 400 unique PartTypes
 WITH all_skus AS (
-  SELECT rec_part_1 AS sku FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_1), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') AS sku FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT rec_part_2 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_2), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT rec_part_3 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_3), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT rec_part_4 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations` WHERE rec_part_4 IS NOT NULL
+  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_4), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations` WHERE rec_part_4 IS NOT NULL
 )
 SELECT
   COUNT(DISTINCT cat.PartType) AS unique_part_types,
@@ -275,7 +275,7 @@ SELECT
   END AS status
 FROM all_skus s
 LEFT JOIN (
-  SELECT REGEXP_REPLACE(UPPER(TRIM(PartNumber)), r'([0-9])[BRGP]$', r'\1') AS PartNumber, MAX(PartType) AS PartType
+  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(TRIM(PartNumber)), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') AS PartNumber, MAX(PartType) AS PartType
   FROM `auxia-gcp.data_company_1950.import_items`
   GROUP BY PartNumber
 ) cat ON s.sku = cat.PartNumber;
@@ -285,22 +285,29 @@ LEFT JOIN (
 -- CHECK 7f: Authoritative Fitment Match (YMM x SKU)
 -- ============================================================================
 -- Expected: mismatch_rows = 0, users_with_mismatch = 0
+-- Both sides normalize with: (1) BRGP color suffix, (2) explicit finish/packaging suffixes
+-- so that e.g. 10416-KIT, 10416-BLK, 10416B all compare as 10416.
+-- Only strips known suffixes: -KIT, -BLK, -POL, -CHR, -RAW (NOT generic -XX catch-all,
+-- which destroys legitimate IDs like -GM/-FD engine platform, -RH/-LH hand, -67 jet size).
 WITH recs_long AS (
   SELECT
     email_lower,
     SAFE_CAST(v1_year AS INT64) AS v1_year,
     UPPER(v1_make) AS v1_make,
     UPPER(v1_model) AS v1_model,
-    UPPER(rec_part_1) AS sku
+    REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_1), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') AS sku
   FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION ALL
-  SELECT email_lower, SAFE_CAST(v1_year AS INT64), UPPER(v1_make), UPPER(v1_model), UPPER(rec_part_2)
+  SELECT email_lower, SAFE_CAST(v1_year AS INT64), UPPER(v1_make), UPPER(v1_model),
+    REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_2), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '')
   FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION ALL
-  SELECT email_lower, SAFE_CAST(v1_year AS INT64), UPPER(v1_make), UPPER(v1_model), UPPER(rec_part_3)
+  SELECT email_lower, SAFE_CAST(v1_year AS INT64), UPPER(v1_make), UPPER(v1_model),
+    REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_3), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '')
   FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   UNION ALL
-  SELECT email_lower, SAFE_CAST(v1_year AS INT64), UPPER(v1_make), UPPER(v1_model), UPPER(rec_part_4)
+  SELECT email_lower, SAFE_CAST(v1_year AS INT64), UPPER(v1_make), UPPER(v1_model),
+    REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_4), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '')
   FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
   WHERE rec_part_4 IS NOT NULL
 ),
@@ -309,7 +316,7 @@ fitment_map AS (
     SAFE_CAST(COALESCE(TRIM(fit.v1_year), CAST(fit.v1_year AS STRING)) AS INT64) AS v1_year,
     UPPER(TRIM(fit.v1_make)) AS v1_make,
     UPPER(TRIM(fit.v1_model)) AS v1_model,
-    REGEXP_REPLACE(UPPER(TRIM(prod.product_number)), r'([0-9])[BRGP]$', r'\1') AS sku
+    REGEXP_REPLACE(REGEXP_REPLACE(UPPER(TRIM(prod.product_number)), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') AS sku
   FROM `auxia-gcp.data_company_1950.vehicle_product_fitment_data` fit,
        UNNEST(fit.products) prod
   WHERE prod.product_number IS NOT NULL
