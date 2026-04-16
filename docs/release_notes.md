@@ -1,5 +1,107 @@
 # Holley Recommendations - Release Notes
 
+## V5.19 (April 15, 2026)
+
+**Dataset**: `auxia-reporting.temp_holley_v5_19`
+**Script**: `sql/recommendations/v5_19_non_fitment_recommendations.sql`
+**Linear**: AUX-14029
+
+### Summary
+
+New pipeline for the ~1.8M **no-YMM** users that V5.18 cannot serve (V5.18 is YMM-only). V5.19 is disjoint from V5.18: users appear in exactly one of the two outputs. Uses a **unified recency-weighted scoring model** that combines all available behavioral signals (cart, view, recent purchase, historical purchase) with exponential time decay, plus bestseller fallback for users with no signal. Emits `dominant_signal` + `engagement_tier` to route downstream email treatment language.
+
+### Why
+
+- V5.18 serves ~457K YMM users. Another ~1.8M no-YMM active users got nothing personalized, despite leaving strong browse/cart signals.
+- Signal investigation (AUX-14029) overturned V5.18's "browse doesn't convert" assumption for the no-YMM segment:
+  - Cart Update: **70.3%** same-SKU purchase within 30d
+  - Viewed Product: **30.6%** same-SKU purchase within 30d
+  - Decay is sharp: 70% of view→purchase conversions happen within 24h, 90% within 14d
+- Unified scoring (one formula across all signals) was chosen over tiered fallback to avoid tier-handoff complexity.
+
+### Differences from V5.18
+
+| Aspect | V5.18 | V5.19 |
+|--------|-------|-------|
+| Target audience | ~457K YMM users | ~1.8M **no-YMM** users (disjoint) |
+| Candidates | Fitment-matched SKUs only | User-signaled SKUs ∪ bestsellers |
+| Scoring | Segment/make/global popularity | Recency-weighted sum across signals |
+| Required signal | Fitment match on v1 YMM | Any of {cart, view, purchase, bestseller} |
+| Min price | $50 | **$25** (lower floor for broader reach) |
+| Fallback | 3-tier popularity | **Global bestsellers** for no-signal users |
+| Output table | `final_vehicle_recommendations` | `final_non_fitment_recommendations` |
+
+### Scoring
+
+```
+score(user, sku) = Σ_{signal ∈ signals(user, sku)} weight[signal] × EXP(-age_days / tau[signal])
+```
+
+| Signal | weight | tau (days) | Rationale |
+|--------|--------|------------|-----------|
+| cart | 10.0 | 7 | 70% same-SKU conversion — strongest signal |
+| view | 5.0 | 3 | 30% same-SKU conversion, fast decay (90% within 14d) |
+| purchase_recent | 3.0 | 30 | Proven intent; not repeat-purchase target |
+| purchase_historical | 2.0 | 180 | Long-proven taste, low recency |
+| bestseller | 1.0 | ∞ (no decay) | Catch-all fallback |
+
+Per (user, sku) pair we take the freshest occurrence of each signal type, weight it by `weight × EXP(-age/tau)`, then sum across signal types. The dominant signal per rec slot = the signal type with the largest contribution to that rec's score.
+
+### New Output Schema
+
+`auxia-reporting.temp_holley_v5_19.final_non_fitment_recommendations`:
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `email_lower` | STRING | Key (disjoint from V5.18) |
+| `rec_part_1..4` | STRING | Up to 4 SKUs, NULL-padded beyond rec_count |
+| `rec{1..4}_price` | FLOAT64 | ≥ $25 |
+| `rec{1..4}_score` | FLOAT64 | Monotonically non-increasing across slots |
+| `rec{1..4}_image` | STRING | HTTPS required |
+| `rec{1..4}_type` | STRING | 'cart', 'view', 'purchase_recent', 'purchase_historical', 'bestseller' |
+| `rec{1..4}_signal_age_days` | INT64 | Days since freshest signal (NULL for bestseller) |
+| `rec_count` | INT64 | 1..4 |
+| `dominant_signal` | STRING | Top signal type across user's recs — routes email language |
+| `engagement_tier` | STRING | 'hot' / 'warm' / 'cold' / 'fallback' |
+| `generated_at` | TIMESTAMP | |
+| `pipeline_version` | STRING | 'v5.19' |
+
+Engagement tier:
+- `hot`: cart or view signal within last 7 days
+- `warm`: view/purchase signal within last 30 days (not hot)
+- `cold`: purchase-only signal (recent or historical)
+- `fallback`: bestseller-only (no user signal)
+
+### Reused V5.18 Patterns
+
+- Event extraction: `staged_events` shape from `v5_18_fitment_recommendations.sql` (VIEWED PRODUCT / CART UPDATE / ORDERED PRODUCT / PLACED ORDER / CONSUMER WEBSITE ORDER)
+- Variant dedup regex: `([0-9])[BRGP]$`
+- Purchase exclusion: 365-day window, variant-normalized
+- Diversity cap: max 2 SKUs per PartType per user
+- Refurbished + commodity exclusion
+- HTTPS image required; protocol-relative URLs normalized
+- Sep 1, 2025 boundary between recent vs historical purchase events
+
+### Validation
+
+- `sql/validation/v5_19_go_no_go_eval.sql` mirrors V5.18's severity-ranked format (CRITICAL → HIGH → MEDIUM → INFO).
+- **CRITICAL**: V5.18 user overlap (must be 0), price floor, score sign, rec_type ∈ allowed set, engagement_tier ∈ allowed set, dominant_signal matches rec_types, score monotonicity, NULL-slot gaps, rec_count accuracy, HTTPS images, min user count.
+- **HIGH**: purchase exclusion, duplicate SKUs per user, diversity cap, refurbished leakage, slot consistency.
+- Investigation aids emitted only on FAIL.
+
+### Deployment Safety
+
+All writes target `auxia-reporting.temp_holley_v5_19.*`. Production copy is gated behind `DECLARE deploy_to_production BOOL DEFAULT FALSE;` and does not run unless the flag is flipped explicitly. Production table `auxia-reporting.company_1950_jp.final_non_fitment_recommendations` is only touched after QA passes and the flag is enabled.
+
+### Open Questions
+
+- Tau values are initial estimates grounded in decay data. Grid-search during QA or ship defaults and tune via A/B?
+- Bestseller list: global top-N or per-PartType top-N (more diverse fallback)?
+- Keep `signal_age_days` in production output or analytics-only?
+- Cap bestseller-only output users (emit fallback only for opted-in users)?
+
+---
+
 ## V5.18 (February 19, 2026)
 
 **Dataset**: `auxia-reporting.temp_holley_v5_18`
