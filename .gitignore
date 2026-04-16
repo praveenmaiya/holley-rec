@@ -85,3 +85,6 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Generated/experimental outputs (not tracked)
+others/

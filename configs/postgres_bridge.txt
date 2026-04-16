@@ -1,0 +1,44 @@
+start transaction;
+INSERT INTO public.model_config (model_config_id, name, description, scoring_model, perturbation_models, optimizers,
+                                 ranking_model, model_type)
+VALUES (195001001, 'Click Bandit Model based on Thompson Sampling',
+        'Model that scores treatments based on historical click rate along with Thompson sampling', '{
+    "name": "PythonContainerModel",
+    "parameters": {
+      "pythonContainerModel": {
+        "modelName": "/docker/tensorflowv2/c1950/bandit_click_v1@default-stable"
+      }
+    },
+    "description": "Model that scores treatments based on historical click rate along with Thompson sampling",
+    "scoringModelId": 5,
+    "scoringModelType": "PYTHON_CONTAINER_MODEL"
+  }', '[
+    {
+      "name": "TreatmentBoostingModel",
+      "parameters": {},
+      "description": "Boosts treatments by treatment-specific logic",
+      "perturbationModelId": 1,
+      "perturbationModelType": "TREATMENT_BOOSTING_MODEL"
+    }
+  ]', '[
+    {
+      "name": "DefaultOptimizationRuleEvaluator",
+      "description": "Default optimization rule evaluator",
+      "optimizerId": 1,
+      "optimizationRuleType": "DEFAULT_OPTIMIZATION_RULE_EVALUATOR"
+    }
+  ]', '{
+    "name": "IncreasingScoreRankingModel",
+    "parameters": {
+      "increasingScoreRankingModel": {}
+    },
+    "description": "Model that scores treatments based on historical click rate along with Thompson sampling",
+    "rankingModelId": 1,
+    "rankingModelType": "INCREASING_SCORE"
+  }', 'TREATMENT_SCORING');
+commit;
+
+start transaction;
+INSERT INTO public.model_config_company_allowlist (model_config_id, company_id)
+VALUES (195001001, 1950);
+commit;
