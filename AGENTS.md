@@ -1,12 +1,12 @@
 # Holley Recommendation System
 
-Vehicle fitment recommendations for automotive parts using collaborative filtering.
+Vehicle-fitment recommendations for automotive parts using the `v5.18` fitment-only, popularity-only BigQuery pipeline.
 
 ## Quick Start
 
 | I want to... | Do this |
 |--------------|---------|
-| Run the pipeline | `/run-pipeline` or `bq query < sql/recommendations/v5_17_*.sql` |
+| Run the pipeline | `/run-pipeline` or `bq query < sql/recommendations/v5_18_fitment_recommendations.sql` |
 | Check pipeline health | `/status` |
 | Validate output quality | `/validate` |
 | Deploy to production | `/deploy` (after validation passes) |
@@ -21,14 +21,19 @@ Vehicle fitment recommendations for automotive parts using collaborative filteri
 
 | Doc | What it explains |
 |-----|------------------|
-| [Pipeline Architecture](docs/architecture/pipeline_architecture.md) | Data flow, scoring algorithm, filters, tuning knobs |
+| [V5.18 Architecture Specification](docs/architecture/v5_18_architecture_specification.md) | Current production architecture, scoring, filters, validation, and release gates |
 | [BigQuery Schema](docs/architecture/bigquery_schema.md) | Table schemas, column types, query patterns, gotchas |
 | [Release Notes](docs/release_notes.md) | Version history and changes |
 
 ## Stack
 - Python 3.12+, uv, BigQuery (bq CLI), MLflow, W&B
+- Current production release: `v5.18`
 - Production: `auxia-reporting.company_1950_jp.final_vehicle_recommendations`
-- Working: `auxia-reporting.temp_holley_v5_17`
+- Working: `auxia-reporting.temp_holley_v5_18`
+
+## Plan Review Gate
+
+**MANDATORY: Before calling `ExitPlanMode`, you MUST invoke the `plan-exit-review` skill first.** This skill reviews the plan for scope, architecture, code quality, tests, and performance issues before implementation begins. Never skip this step — no plan exits without review.
 
 ## Workflow: Plan → Code → Review
 
@@ -38,29 +43,32 @@ Vehicle fitment recommendations for automotive parts using collaborative filteri
 3. ASK if unclear - don't assume
 
 ### CODE
-1. Use existing SQL patterns in `sql/recommendations/`
+1. Use existing SQL patterns in `sql/recommendations/v5_18_fitment_recommendations.sql`
 2. Run `bq query --dry_run` before execution
 3. Use `sql-debugger` subagent if errors occur
 
 ### REVIEW
 1. Run `sql/validation/qa_checks.sql`
-2. Verify: 450K users, 0 duplicates, prices ≥$50
-3. Update docs if architecture changed
+2. Run `sql/validation/v5_18_go_no_go_eval.sql`
+3. Verify: ~450K users, 0 duplicates, prices ≥$50, 0 universal products, 0 fitment mismatches
+4. Update docs if architecture or validation changed
 
 ## Key Files
 
 ### Architecture (start here)
 | Path | Purpose |
 |------|---------|
-| `docs/architecture/pipeline_architecture.md` | **Data flow, scoring, filters, tuning knobs** |
+| `docs/architecture/v5_18_architecture_specification.md` | **Current production architecture, scoring, filters, validation, and release gates** |
 | `docs/architecture/bigquery_schema.md` | **Table schemas, gotchas, query patterns** |
+| `docs/release_notes.md` | **Current production release notes and version history** |
 
 ### Pipeline
 | Path | Purpose |
 |------|---------|
-| `sql/recommendations/v5_17_*.sql` | Production pipeline |
-| `sql/validation/qa_checks.sql` | QA validation |
-| `specs/v5_6_recommendations.md` | Current spec |
+| `sql/recommendations/v5_18_fitment_recommendations.sql` | Current production pipeline |
+| `sql/validation/qa_checks.sql` | Standard QA validation |
+| `sql/validation/v5_18_go_no_go_eval.sql` | Production go/no-go release gate |
+| `specs/v5_18_fitment_recommendations.md` | Current production spec |
 
 ### Config
 | Path | Purpose |
@@ -88,13 +96,16 @@ Vehicle fitment recommendations for automotive parts using collaborative filteri
 ## Commands
 ```bash
 # Validate SQL
-bq query --dry_run --use_legacy_sql=false < sql/recommendations/v5_17_*.sql
+bq query --dry_run --use_legacy_sql=false < sql/recommendations/v5_18_fitment_recommendations.sql
 
 # Run pipeline
-bq query --use_legacy_sql=false < sql/recommendations/v5_17_*.sql
+bq query --use_legacy_sql=false < sql/recommendations/v5_18_fitment_recommendations.sql
 
 # Run QA checks
 bq query --use_legacy_sql=false < sql/validation/qa_checks.sql
+
+# Run production go/no-go release gate
+bq query --use_legacy_sql=false < sql/validation/v5_18_go_no_go_eval.sql
 
 # Run Python script on K8s (via Metaflow)
 ./flows/run.sh src/bandit_click_holley.py
@@ -129,7 +140,8 @@ make test && make lint
 ## Critical Rules
 - Never hardcode project IDs (use configs/)
 - Always COALESCE(string_value, long_value) for event properties
-- Run qa_checks.sql after any pipeline change
+- `v5.18` is fitment-only and popularity-only; do not treat collaborative filtering, universal products, or intent scoring as the current production path
+- Run `qa_checks.sql` and `v5_18_go_no_go_eval.sql` after any pipeline change
 - Max 2 SKUs per PartType (diversity filter)
 - Variant dedup: B/R/G/P suffixes only stripped when preceded by digit (e.g., 140061B → 140061)
 - Sep 1, 2025 is fixed boundary between historical/recent data - don't change
@@ -209,8 +221,11 @@ Project-specific subagents in `.claude/agents/`:
 - `/debug-sql` - SQL error diagnosis
 - `/compare-versions` - Pipeline version diff
 - `/deploy` - Deploy staging to production
-- `/run-pipeline` - Execute v5.17 pipeline
+- `/run-pipeline` - Execute v5.18 pipeline
 - `/status` - Quick health check (prod vs staging, CTR, git status)
+
+### Plan Review
+- `/plan-exit-review` - Thorough plan review before ExitPlanMode (auto-invoked)
 
 ### Workflow Skills (Multi-Step Automation)
 - `/new-version` - Create new pipeline version end-to-end (spec → implement → test → validate → compare)
@@ -243,16 +258,16 @@ SELECT * FROM EXTERNAL_QUERY(
 
 ### Planning & Implementation
 ```
-"Plan how to add [feature]. Consider the existing patterns in v5.17."
+"Plan how to add [feature]. Consider the existing patterns in v5.18."
 "There's a bug where [X happens] but it should [Y]. Analyze and fix it."
-"Create a new pipeline version that [adds/changes] [feature]."
+"Create a new pipeline version starting from v5.18 that [adds/changes] [feature]."
 ```
 
 ### Analysis & Debugging
 ```
 "What's the CTR for Personalized vs Static treatments over the last 60 days?"
 "Debug this SQL error: [paste error message]"
-"Compare v5.17 vs v5.18 output - what changed?"
+"Compare v5.18 vs v5.19 output - what changed?"
 "Is Personalized beating Static? Use unbiased methodology."
 ```
 
@@ -260,7 +275,7 @@ SELECT * FROM EXTERNAL_QUERY(
 1. **Let Claude iterate**: Give sample data/test criteria, let it work autonomously
 2. **Use planning mode**: For complex tasks, let Claude plan before coding
 3. **Provide success criteria**: "Success = QA passes with 450K users, 0 duplicates"
-4. **Reference architecture docs**: "See pipeline_architecture.md for scoring algorithm"
+4. **Reference architecture docs**: "See v5_18_architecture_specification.md for current production scoring, filters, and validation"
 
 ### Anti-Patterns (avoid these)
 ```

@@ -16,6 +16,8 @@
 --   - Output is a severity-ranked checklist (CRITICAL/HIGH/MEDIUM/INFO).
 --
 -- QA Criteria Covered (use-case checklist):
+--   See OUTPUT_CONTRACT.md for full invariant definitions (I1-I12).
+--
 --   1) Fitment Safety (no "Golf drama" class issues)
 --      - Every YMM x SKU must exist in authoritative fitment map.
 --      - Both row-level and user-level mismatch counts must be zero.
@@ -26,6 +28,7 @@
 --
 --   3) Commercial Constraints
 --      - Price floor must hold for every recommended slot (min_price variable).
+--      - No negative scores [I5].
 --
 --   4) Purchase Exclusion Protection
 --      - Reconstructs last-365-day purchases from import_orders + order events.
@@ -36,16 +39,22 @@
 --      - pop_source labels (segment/make/global) must match supporting tables.
 --
 --   6) Ranking Quality
---      - No duplicate SKUs within a user row.
+--      - No duplicate SKUs within a user row [I2].
 --      - Diversity cap: no more than 2 SKUs per PartType.
---      - fitment_count must be only 3 or 4.
---      - Score ordering must be monotonic across ranked slots.
+--      - fitment_count must equal filled rec slots (3 or 4) [I6 CRITICAL].
+--      - Score ordering must be monotonic [I7 CRITICAL].
+--      - No NULL gaps between filled slots [I8 CRITICAL].
 --
---   7) Delivery Coverage
---      - Final user count gate (volume floor).
+--   7) Slot Quality
+--      - No NULL/empty images in filled slots [I9 CRITICAL].
+--      - Slot 4 consistency: if rec_part_4 NULL, all rec4_* NULL [I11].
+--      - engagement_tier must be binary hot/cold only [I10 CRITICAL].
+--
+--   8) Delivery Coverage
+--      - Final user count gate (volume floor) [I1].
 --      - Final coverage vs base fitment universe gate (drop detection).
 --
---   8) Debug/Triage Readiness
+--   9) Debug/Triage Readiness
 --      - Investigation samples are emitted only when any FAIL is present.
 --
 -- Data Windows Used:
@@ -399,11 +408,27 @@ FROM source_support;
 INSERT INTO go_no_go_checks
 SELECT
   'fitment_count_outside_3_or_4',
-  'HIGH',
+  'CRITICAL',
   CAST(COUNTIF(fitment_count NOT IN (3, 4)) AS STRING),
   '0',
   CASE WHEN COUNTIF(fitment_count NOT IN (3, 4)) = 0 THEN 'PASS' ELSE 'FAIL' END,
-  'Output must include only users with 3 or 4 recommendations'
+  'fitment_count must be 3 or 4 (= number of filled rec slots)'
+FROM recs_wide;
+
+INSERT INTO go_no_go_checks
+SELECT
+  'fitment_count_slot_mismatch',
+  'CRITICAL',
+  CAST(
+    COUNTIF(fitment_count = 3 AND rec_part_4 IS NOT NULL) +
+    COUNTIF(fitment_count = 4 AND rec_part_4 IS NULL)
+  AS STRING),
+  '0',
+  CASE WHEN
+    COUNTIF(fitment_count = 3 AND rec_part_4 IS NOT NULL) +
+    COUNTIF(fitment_count = 4 AND rec_part_4 IS NULL) = 0
+  THEN 'PASS' ELSE 'FAIL' END,
+  'fitment_count must match actual non-null rec_part slots'
 FROM recs_wide;
 
 INSERT INTO go_no_go_checks
@@ -419,7 +444,7 @@ FROM recs_wide;
 INSERT INTO go_no_go_checks
 SELECT
   'score_ordering_violations',
-  'MEDIUM',
+  'CRITICAL',
   CAST(COUNTIF(NOT (
     rec1_score >= rec2_score AND
     rec2_score >= rec3_score AND
@@ -431,7 +456,97 @@ SELECT
     rec2_score >= rec3_score AND
     (rec4_score IS NULL OR rec3_score >= rec4_score)
   )) = 0 THEN 'PASS' ELSE 'FAIL' END,
-  'Top-N recommendations must be score sorted'
+  'rec1_score >= rec2_score >= rec3_score >= rec4_score for 100% of users'
+FROM recs_wide;
+
+INSERT INTO go_no_go_checks
+SELECT
+  'null_slot_gaps',
+  'CRITICAL',
+  CAST(COUNTIF(
+    (rec_part_2 IS NULL AND rec_part_3 IS NOT NULL) OR
+    (rec_part_3 IS NULL AND rec_part_4 IS NOT NULL)
+  ) AS STRING),
+  '0',
+  CASE WHEN COUNTIF(
+    (rec_part_2 IS NULL AND rec_part_3 IS NOT NULL) OR
+    (rec_part_3 IS NULL AND rec_part_4 IS NOT NULL)
+  ) = 0 THEN 'PASS' ELSE 'FAIL' END,
+  'No NULL gaps between filled slots (slots must be contiguous from slot 1)'
+FROM recs_wide;
+
+INSERT INTO go_no_go_checks
+SELECT
+  'null_images_in_filled_slots',
+  'CRITICAL',
+  CAST(
+    COUNTIF(rec_part_1 IS NOT NULL AND (rec1_image IS NULL OR rec1_image = '')) +
+    COUNTIF(rec_part_2 IS NOT NULL AND (rec2_image IS NULL OR rec2_image = '')) +
+    COUNTIF(rec_part_3 IS NOT NULL AND (rec3_image IS NULL OR rec3_image = '')) +
+    COUNTIF(rec_part_4 IS NOT NULL AND (rec4_image IS NULL OR rec4_image = ''))
+  AS STRING),
+  '0',
+  CASE WHEN
+    COUNTIF(rec_part_1 IS NOT NULL AND (rec1_image IS NULL OR rec1_image = '')) +
+    COUNTIF(rec_part_2 IS NOT NULL AND (rec2_image IS NULL OR rec2_image = '')) +
+    COUNTIF(rec_part_3 IS NOT NULL AND (rec3_image IS NULL OR rec3_image = '')) +
+    COUNTIF(rec_part_4 IS NOT NULL AND (rec4_image IS NULL OR rec4_image = ''))
+    = 0 THEN 'PASS' ELSE 'FAIL' END,
+  'Every filled rec slot must have a non-NULL, non-empty image URL'
+FROM recs_wide;
+
+INSERT INTO go_no_go_checks
+SELECT
+  'engagement_tier_invalid',
+  'CRITICAL',
+  CAST(
+    COUNTIF(engagement_tier IS NULL) +
+    COUNTIF(engagement_tier NOT IN ('hot', 'cold'))
+  AS STRING),
+  '0',
+  CASE WHEN
+    COUNTIF(engagement_tier IS NULL) +
+    COUNTIF(engagement_tier NOT IN ('hot', 'cold'))
+    = 0 THEN 'PASS' ELSE 'FAIL' END,
+  'engagement_tier must be exactly "hot" or "cold" — no NULLs, no other values'
+FROM recs_wide;
+
+INSERT INTO go_no_go_checks
+SELECT
+  'slot4_consistency',
+  'HIGH',
+  CAST(COUNTIF(
+    rec_part_4 IS NULL AND (
+      rec4_price IS NOT NULL OR rec4_score IS NOT NULL OR
+      rec4_image IS NOT NULL OR rec4_type IS NOT NULL OR
+      rec4_pop_source IS NOT NULL
+    )
+  ) AS STRING),
+  '0',
+  CASE WHEN COUNTIF(
+    rec_part_4 IS NULL AND (
+      rec4_price IS NOT NULL OR rec4_score IS NOT NULL OR
+      rec4_image IS NOT NULL OR rec4_type IS NOT NULL OR
+      rec4_pop_source IS NOT NULL
+    )
+  ) = 0 THEN 'PASS' ELSE 'FAIL' END,
+  'If rec_part_4 is NULL, all rec4_* fields must also be NULL'
+FROM recs_wide;
+
+INSERT INTO go_no_go_checks
+SELECT
+  'negative_scores',
+  'CRITICAL',
+  CAST(
+    COUNTIF(rec1_score < 0) + COUNTIF(rec2_score < 0) +
+    COUNTIF(rec3_score < 0) + COUNTIF(rec4_score < 0)
+  AS STRING),
+  '0',
+  CASE WHEN
+    COUNTIF(rec1_score < 0) + COUNTIF(rec2_score < 0) +
+    COUNTIF(rec3_score < 0) + COUNTIF(rec4_score < 0)
+    = 0 THEN 'PASS' ELSE 'FAIL' END,
+  'All scores must be >= 0'
 FROM recs_wide;
 
 INSERT INTO go_no_go_checks
