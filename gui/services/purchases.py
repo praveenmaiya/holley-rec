@@ -29,9 +29,13 @@ def get_purchase_history(email_lower: str) -> pd.DataFrame:
     SELECT DISTINCT
       o.sku,
       o.order_date,
-      p.part_type
+      p.part_type,
+      img.image_url,
+      sp.price AS unit_price
     FROM orders o
     LEFT JOIN products p ON o.sku = p.sku
+    LEFT JOIN `auxia-reporting.temp_holley_v5_18.sku_image_urls` img ON o.sku = img.sku
+    LEFT JOIN `auxia-reporting.temp_holley_v5_18.sku_prices` sp ON o.sku = sp.sku
     WHERE o.order_date IS NOT NULL
     ORDER BY o.order_date
     """

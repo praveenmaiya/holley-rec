@@ -1,23 +1,22 @@
-"""Render the user journey timeline in Streamlit."""
+"""Render the user journey timeline with styled components."""
 
 import streamlit as st
 from services.attribution import TimelineEvent
 from services.treatments import get_treatment_name, get_treatment_type
 
-from components.product_card import render_purchase_card, render_rec_card
+from components.product_card import render_purchase_cards, render_rec_cards
 
 
 def render_timeline(timeline: list[TimelineEvent], recs: list[dict]):
     """Render chronological timeline with email events interleaved."""
-    # Always show recommendations if we have them
     if recs:
         emails = [e for e in timeline if e.event_type == "email"]
         if not emails:
-            st.subheader("📦 Current Recommendations")
-            rec_cols = st.columns(len(recs))
-            for i, rec in enumerate(recs):
-                with rec_cols[i]:
-                    render_rec_card(rec)
+            st.markdown(
+                '<p class="section-title">Current Recommendations</p>',
+                unsafe_allow_html=True,
+            )
+            render_rec_cards(recs)
 
     if not timeline:
         if not recs:
@@ -27,41 +26,45 @@ def render_timeline(timeline: list[TimelineEvent], recs: list[dict]):
     before = [e for e in timeline if e.event_type == "purchase_before"]
     rest = [e for e in timeline if e.event_type != "purchase_before"]
 
-    # --- Purchase History ---
     if before:
-        st.subheader(f"🔧 Purchase History ({len(before)} orders)")
-        cols = st.columns(min(len(before), 4))
-        for i, event in enumerate(before):
-            with cols[i % 4]:
-                render_purchase_card(event.sku, event.date, event.part_type)
+        st.markdown(
+            f'<p class="section-title">Purchase History ({len(before)} orders)</p>',
+            unsafe_allow_html=True,
+        )
+        render_purchase_cards(before)
 
-    # --- Email Events + Post-Email Purchases ---
     current_email = None
     post_purchases: list[TimelineEvent] = []
 
     for event in rest:
         if event.event_type == "email":
-            # Flush previous email's purchases
             if current_email is not None:
                 _render_post_purchases(post_purchases)
                 post_purchases = []
 
             current_email = event
-            st.divider()
             treatment_name = get_treatment_name(event.treatment_id)
             treatment_type = get_treatment_type(event.treatment_id)
-            type_badge = "🟣" if treatment_type == "Personalized" else "🔵"
+            badge_class = (
+                "badge-personalized" if treatment_type == "Personalized" else "badge-static"
+            )
+            opened = "Opened" if event.opened else "Not opened"
+            clicked = "Clicked" if event.clicked else "Not clicked"
 
-            st.subheader(f"📧 {treatment_name}")
-            st.caption(
-                f"{type_badge} {treatment_type} | Sent: {event.date} | "
-                f"Opened: {'✅' if event.opened else '❌'} | "
-                f"Clicked: {'✅' if event.clicked else '❌'}"
+            st.markdown(
+                f"""
+                <div class="email-block">
+                    <p class="email-title">{treatment_name}</p>
+                    <p class="email-meta">
+                        <span class="{badge_class}">{treatment_type}</span>
+                        &nbsp; Sent {event.date} &nbsp;|&nbsp; {opened} &nbsp;|&nbsp; {clicked}
+                    </p>
+                </div>
+            """,
+                unsafe_allow_html=True,
             )
 
-            # Render recommendation cards for this email
             if recs:
-                rec_cols = st.columns(len(recs))
                 hit_skus = {
                     e.sku
                     for e in rest
@@ -69,46 +72,63 @@ def render_timeline(timeline: list[TimelineEvent], recs: list[dict]):
                     and e.is_hit
                     and e.attributed_to_treatment == event.treatment_id
                 }
-                for i, rec in enumerate(recs):
-                    with rec_cols[i]:
-                        render_rec_card(rec, hit=rec["sku"] in hit_skus)
+                engagement = {"opened": event.opened, "clicked": event.clicked}
+                render_rec_cards(recs, hit_skus, email_engagement=engagement)
 
         elif event.event_type == "purchase_after":
             post_purchases.append(event)
 
-    # Flush final email's purchases
     if post_purchases:
         _render_post_purchases(post_purchases)
 
 
 def _render_post_purchases(purchases: list[TimelineEvent]):
-    """Render post-email purchase section."""
     if not purchases:
         return
-    st.markdown(f"**🛒 Purchases after email ({len(purchases)})**")
-    cols = st.columns(min(len(purchases), 4))
-    for i, event in enumerate(purchases):
-        with cols[i % 4]:
-            render_purchase_card(
-                event.sku,
-                event.date,
-                event.part_type,
-                is_hit=event.is_hit,
-                matched_slot=event.matched_slot,
-            )
+    st.markdown(
+        f'<p class="section-title">Purchases After Email ({len(purchases)})</p>',
+        unsafe_allow_html=True,
+    )
+    render_purchase_cards(purchases)
 
 
 def render_summary(timeline: list[TimelineEvent], recs: list[dict]):
-    """Render summary stats at the top."""
+    """Render summary stats as styled metric cards."""
     after = [e for e in timeline if e.event_type == "purchase_after"]
     emails = [e for e in timeline if e.event_type == "email"]
     hits = [e for e in after if e.is_hit]
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Emails Received", len(emails))
-    col2.metric("Hit Rate", f"{len(hits)}/{len(recs)}" if recs else "N/A")
-    col3.metric("Post-Email Purchases", len(after))
-
+    hit_rate = f"{len(hits)}/{len(recs)}" if recs else "N/A"
     hit_skus = {h.sku for h in hits}
     revenue = sum(r["price"] for r in recs if r["sku"] in hit_skus)
-    col4.metric("Revenue from Recs", f"${revenue:,.2f}")
+
+    all_purchases = [e for e in timeline if e.event_type in ("purchase_before", "purchase_after")]
+    total_spent = sum(e.unit_price for e in all_purchases if e.unit_price)
+
+    st.markdown(
+        f"""
+        <div class="metrics-row">
+            <div class="metric-card">
+                <p class="metric-label">Emails Received</p>
+                <p class="metric-value">{len(emails)}</p>
+            </div>
+            <div class="metric-card">
+                <p class="metric-label">Hit Rate</p>
+                <p class="metric-value">{hit_rate}</p>
+            </div>
+            <div class="metric-card">
+                <p class="metric-label">Post-Email Purchases</p>
+                <p class="metric-value">{len(after)}</p>
+            </div>
+            <div class="metric-card">
+                <p class="metric-label">Revenue from Recs</p>
+                <p class="metric-value">${revenue:,.2f}</p>
+            </div>
+            <div class="metric-card">
+                <p class="metric-label">Total Spent</p>
+                <p class="metric-value">${total_spent:,.2f}</p>
+            </div>
+        </div>
+    """,
+        unsafe_allow_html=True,
+    )

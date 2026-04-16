@@ -20,6 +20,9 @@ class TimelineEvent:
     is_hit: bool | None = None
     matched_slot: int | None = None
     attributed_to_treatment: int | None = None
+    # Purchase enrichment fields
+    image_url: str | None = None
+    unit_price: float | None = None
     # Email fields
     treatment_id: int | None = None
     opened: bool | None = None
@@ -43,6 +46,10 @@ def build_timeline(
                     event_type="purchase_before",
                     sku=row["sku"],
                     part_type=row.get("part_type"),
+                    image_url=row.get("image_url") if pd.notna(row.get("image_url")) else None,
+                    unit_price=float(row["unit_price"])
+                    if pd.notna(row.get("unit_price"))
+                    else None,
                 )
             )
         events.sort(key=lambda e: e.date)
@@ -78,6 +85,10 @@ def build_timeline(
                     event_type="purchase_before",
                     sku=sku,
                     part_type=row.get("part_type"),
+                    image_url=row.get("image_url") if pd.notna(row.get("image_url")) else None,
+                    unit_price=float(row["unit_price"])
+                    if pd.notna(row.get("unit_price"))
+                    else None,
                 )
             )
         else:
@@ -97,6 +108,10 @@ def build_timeline(
                     event_type="purchase_after",
                     sku=sku,
                     part_type=row.get("part_type"),
+                    image_url=row.get("image_url") if pd.notna(row.get("image_url")) else None,
+                    unit_price=float(row["unit_price"])
+                    if pd.notna(row.get("unit_price"))
+                    else None,
                     is_hit=is_hit,
                     matched_slot=rec_skus.get(sku),
                     attributed_to_treatment=attributed_treatment,

@@ -64,6 +64,27 @@ def search_users(
     return run_query(query)
 
 
+def get_users_page(cursor: str | None = None, page_size: int = 25) -> pd.DataFrame:
+    """Keyset pagination over VFU users ordered by email_lower.
+
+    Fetches page_size + 1 rows; the extra row signals "has next page".
+    The table is CLUSTERED BY email_lower, so this is efficient at any depth.
+    """
+    where_cursor = f"AND r.email_lower > '{cursor.replace(chr(39), '')}'" if cursor else ""
+    query = f"""
+    WITH uid AS ({_USER_ID_SQL})
+    SELECT
+      uid.user_id,
+      {_REC_COLS}
+    FROM `{_RECS_TABLE}` r
+    LEFT JOIN uid ON r.email_lower = uid.email_lower
+    WHERE TRUE {where_cursor}
+    ORDER BY r.email_lower
+    LIMIT {page_size + 1}
+    """
+    return run_query(query)
+
+
 def get_random_users(n: int = 25, buyers_only: bool = False) -> pd.DataFrame:
     """Get random VFU users, optionally filtered to buyers."""
     buyer_join = ""
