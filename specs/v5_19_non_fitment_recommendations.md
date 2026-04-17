@@ -1,7 +1,7 @@
-# Feature: v5.19 Non-Fitment Product Recommendations (No-YMM Users)
+# Feature: V5.19 Recommendations — Extend Coverage to Non-Fitment Users
 
 ## Status
-- [x] Draft
+- [x] Draft (rewritten 2026-04-16 from locked restructure plan `tasks/v5_19_restructure_plan.md` r7)
 - [ ] In Review
 - [ ] Approved
 - [ ] In Progress
@@ -10,192 +10,282 @@
 Linear: AUX-14029
 Branch: `praveen-aux-14029`
 
+## What V5.19 Is
+
+V5.19 is a **release**, not a separate algorithm. It extends the V5.18 fitment pipeline to also cover users who do **not** have vehicle (YMM) data, using a behavior-based algorithm. Both audiences land in the **same** output table with the **same column set**.
+
+| Audience | Algorithm that produces the row | Approx. size | `rec1_type` |
+|----------|----------------------------------|--------------|-------------|
+| Fitment users (have YMM) | V5.18 fitment + popularity logic — **unchanged** | ~457K | `'fitment'` |
+| Non-fitment users (no YMM) | V5.19 behavior-based logic — **new** | ~1.8M addressable | `'non_fitment'` |
+
+The two audiences are **disjoint by email**. Total addressable jumps from ~457K (V5.18) to ~2.25M (V5.19 release).
+
 ## Problem Statement
-v5.18 serves ~457k YMM users with fitment-based vehicle recommendations. Another ~1.8M active users without complete v1 YMM receive nothing personalized, despite leaving strong signals (views, cart adds, past purchases).
 
-v5.19 extends the recommendation system to this no-YMM audience using a unified recency-weighted scoring model. The design choice of one scoring model (over a tiered fallback) avoids tier-handoff complexity and ships all signal sources through the same pipeline.
+V5.18 served ~457K YMM users with vehicle-fitment recommendations. The remaining ~1.8M active no-YMM users received nothing personalized despite leaving strong behavior signals (cart adds, product views).
 
-## Signal Investigation Summary
-Before designing scoring, we validated each signal's predictive value for no-YMM users specifically:
-
-| Signal | Same-SKU purchase within 30d | Same-SKU share of converters |
-|--------|------------------------------|-------------------------------|
-| Cart Update | 70.3% | 99.5% |
-| Viewed Product | 30.6% | 95.4% |
-
-Decay curves (view→purchase window):
-- 70% of conversions within 24 hours
-- 90% within 14 days
-- ~3% after 30 days
-
-This overturns v5.18's "browse doesn't convert" assumption for the no-YMM segment: short-horizon browse signal is extremely predictive. Tau values for time decay are grounded in these curves.
+V5.19 closes that coverage gap with a unified shared output table. Downstream email systems read one table; row-level audience routing is via existing `rec1..4_type` column values (`'fitment'` vs `'non_fitment'`).
 
 ## Scope
-In scope for v5.19:
-1. New output table for no-YMM users (disjoint from v5.18's fitment output)
-2. Unified recency-weighted scoring across {cart, view, recent purchase, historical purchase, bestseller}
-3. Exponential time decay per signal type
-4. Up to 4 recommendations per eligible user; fall back to bestsellers when user has no signal
-5. `dominant_signal` column to route downstream email treatments by intent type
 
-Out of scope for v5.19:
-1. Collaborative filtering (e.g., "users who browsed X also browsed Y") — v5.20+
+**In scope:**
+1. New non-fitment algorithm covering ~1.8M no-YMM users
+2. Combined output to existing `final_vehicle_recommendations` table (no new columns, no new table)
+3. V5.18 fitment algorithm unchanged
+4. Per-run-overwritten fitment snapshot + UNION ALL to keep release atomic
+5. Lifetime purchase exclusion for non-fitment rows
+6. QA migration so existing value-set checks branch on `rec1_type`
+
+**Out of scope (deferred to V5.20+):**
+1. Collaborative filtering ("users who browsed X also browsed Y")
 2. Search query → SKU mapping
-3. Brand / category / PartType level campaign targeting
-4. GNN approach (v6.x track)
-5. Changes to email treatment routing or bandit system
+3. Brand / category / PartType campaign targeting
+4. GNN approach (V6.x track)
+5. Purchase-based related-item personalization (since exact-SKU purchase candidates are always lifetime-excluded)
+6. Tuning of cart/view weights and taus — ship current values, tune via post-launch CTR data
 
-## Data Requirements
+## Locked Contract
 
-### Input Data
-| Table/Source | Columns Used | Purpose |
-|--------------|--------------|---------|
-| `auxia-gcp.company_1950.ingestion_unified_attributes_schema_incremental` | `user_id`, `user_properties` | Identify no-YMM users (disjoint from v5.18) |
-| `auxia-gcp.company_1950.ingestion_unified_schema_incremental` | `user_id`, `event_name`, `client_event_timestamp`, `event_properties` | View / cart / order events for signal extraction |
-| `auxia-gcp.data_company_1950.import_orders` | `ITEM`, `SHIP_TO_EMAIL`, `ORDER_DATE` | Historical purchase signal + purchase exclusion |
-| `auxia-gcp.data_company_1950.vehicle_product_fitment_data` | `products.product_number` | Candidate SKU universe (any SKU with catalog fitment record) |
-| `auxia-gcp.data_company_1950.import_items` | `PartNumber`, `PartType`, `Tags` | PartType for diversity cap, refurbished/commodity exclusion |
+These are not open choices. Sourced from `tasks/v5_19_restructure_plan.md` r7:
 
-### Output Data
-| Table/Destination | Columns | Purpose |
-|-------------------|---------|---------|
-| `auxia-reporting.temp_holley_v5_19.final_non_fitment_recommendations` | See schema below | Staging output for validation |
-| `auxia-reporting.company_1950_jp.final_non_fitment_recommendations` | Same | Production output (deployed after QA) |
+1. **Single shared output table** — `auxia-reporting.company_1950_jp.final_vehicle_recommendations`
+2. **No new columns** — V5.18's column set is preserved exactly. V5.19 internal fields (`dominant_signal`, signal types, signal ages, 4-tier engagement) live only in `temp_holley_v5_19` working tables
+3. **Row-level audience marker** — `rec1_type ∈ {'fitment', 'non_fitment'}`. Within a row, all populated `recN_type` slots equal each other
+4. **Single release tag** — `pipeline_version = 'v5.19'` for **every** row in the post-restructure table
+5. **YMM placeholders** — non-fitment rows: `v1_year = v1_make = v1_model = 'UNKNOWN'`
+6. **Lifetime purchase exclusion** for non-fitment rows (V5.18 stays at 365d)
+7. **V5.19 signal set** — `{cart, view, bestseller}` only. Purchase signals dropped
+8. **V5.19 price floor** — `$50` (matches V5.18; do not lower)
+9. **Materialization** — V5.19 SQL must snapshot V5.18 staging into a per-run-overwritten table before UNION ALL (V5.18 staging is `CREATE OR REPLACE`'d, so direct read is racy)
+10. **`generated_at` semantics** — both row types are stamped with a **fresh shared-table run timestamp** at UNION time. Fitment rows do **not** preserve their original V5.18 build timestamp; they are re-projected with the V5.19 release run timestamp so the whole shared table reflects one logical release moment. This matches the existing post-deploy reporting at `sql/recommendations/v5_18_fitment_recommendations.sql:1086` which expects a single `generated_at` for the table
 
-Schema:
+## Output Schema
+
+`final_vehicle_recommendations` keeps V5.18's exact column set. V5.19 fills the columns as follows:
+
+| Column | V5.18 (fitment) row | V5.19 (non-fitment) row |
+|--------|---------------------|-------------------------|
+| `email_lower` | user email | user email |
+| `v1_year` | YMM year | `'UNKNOWN'` |
+| `v1_make` | YMM make | `'UNKNOWN'` |
+| `v1_model` | YMM model | `'UNKNOWN'` |
+| `rec_part_1..4` | fitment-filtered SKUs | non-fitment SKUs (cart/view + bestseller) |
+| `rec1..4_price` | price | price |
+| `rec1..4_score` | popularity score | recency-weighted behavior score |
+| `rec1..4_image` | HTTPS image URL | HTTPS image URL |
+| `rec1..4_type` | `'fitment'` | `'non_fitment'` |
+| `rec1..4_pop_source` | `'segment'` / `'make'` / `'global'` | `NULL` |
+| `engagement_tier` | `'hot'` / `'cold'` (from V5.18 logic) | `NULL` |
+| `fitment_count` | `3` or `4` | `NULL` |
+| `generated_at` | shared-table run timestamp (fresh at UNION; **not** the original V5.18 build timestamp) | shared-table run timestamp (fresh at UNION) |
+| `pipeline_version` | `'v5.19'` | `'v5.19'` |
+
+**Note on `rec1..4_score`:** scale and meaning differ across audiences (V5.18 popularity vs V5.19 behavior score). Within an audience, ordering across slots is monotonically decreasing. Cross-audience score comparison is not meaningful.
+
+## Algorithm — V5.18 Fitment Users (unchanged)
+
+V5.18's fitment logic is preserved exactly. See `docs/architecture/v5_18_architecture_specification.md` for the authoritative algorithm description. Summary:
+
+1. Universe: users with valid email + complete YMM
+2. Candidate pool: SKUs that fit user's vehicle (from `vehicle_product_fitment_data`)
+3. Ranking: tiered popularity (segment → make → global)
+4. Filters: price ≥ $50, no refurbished, ≤2 per PartType, variant dedup, exclude purchases (last 365d)
+5. Output: top 4 SKUs
+
+The only change is metadata when these rows land in the shared table:
+- `rec1..4_type = 'fitment'` (was already this value, now semantically the audience marker)
+- `pipeline_version = 'v5.19'` (was `'v5.18'` in V5.18 release)
+
+## Algorithm — V5.19 Non-Fitment Users (new)
+
+### Step 1 — Universe
+
+Users with valid email but **missing** YMM. Specifically: any user from `ingestion_unified_attributes_schema_incremental` with valid email, where at least one of `{v1_year, v1_make, v1_model}` is missing or `v1_year` fails `SAFE_CAST(... AS INT64)`.
+
+**Disjointness gate:** anti-join against the V5.18 fitment universe (by email) so that no user appears in both audiences.
+
+### Step 2 — Signal extraction
+
+For each non-fitment user, extract `(user_id, sku, event_ts, signal_type)` tuples from event data:
+
+| Signal | Source | Event/Pattern |
+|--------|--------|---------------|
+| `cart` | `ingestion_unified_schema_incremental` | `event_name = 'CART UPDATE'`, SKU from `^items_[0-9]+\.productid$` |
+| `view` | `ingestion_unified_schema_incremental` | `event_name = 'VIEWED PRODUCT'`, SKU from `^prod(?:uct)?id$` |
+| `bestseller` | global top-N from `import_orders` (last 365d of orders) | cross-joined to every non-fitment user as a baseline candidate |
+
+Event window: events table last 365 days.
+
+**Purchase signals are not scored.** Under exact-SKU candidate generation + lifetime purchase exclusion (Step 4), any purchase candidate would be removed before ranking. See "Why purchase signals are dropped" below.
+
+### Step 3 — Scoring
+
+For each `(user, SKU)` pair, sum recency-weighted contributions across that user's signals on that SKU:
+
 ```
-email_lower              STRING
-rec_part_1..4            STRING
-rec1..4_price            FLOAT64
-rec1..4_score            FLOAT64
-rec1..4_image            STRING
-rec1..4_type             STRING    -- 'view','cart','purchase_recent','purchase_historical','bestseller'
-rec1..4_signal_age_days  INT64     -- days since freshest supporting signal (NULL for bestseller)
-rec_count                INT64     -- 1..4
-dominant_signal          STRING    -- the top signal type across all user recs
-engagement_tier          STRING    -- 'hot' | 'warm' | 'cold' | 'fallback'
-generated_at             TIMESTAMP
-pipeline_version         STRING    -- 'v5.19'
+score(user, sku) = Σ over signals on (user, sku):  weight × exp( -age_days / tau )
 ```
 
-`dominant_signal` is the contract the email treatment system uses to pick language (e.g., "Still thinking about this?" for cart, "You might also like…" for bestseller).
+| Signal | weight | tau (days) | Decay behavior |
+|--------|--------|------------|----------------|
+| `cart` | 10.0 | 7 | strongest signal; falls below bestseller floor (1.0) at age ≈ 16 days |
+| `view` | 5.0 | 3 | weaker, faster decay; falls below bestseller floor at age ≈ 5 days |
+| `bestseller` | 1.0 | ∞ | constant floor; cross-joined to every user; never decays |
 
-Engagement tier definition:
-- `hot`: any cart or view signal within last 7 days
-- `warm`: any view or purchase signal within last 30 days (and not hot)
-- `cold`: purchase-only signal (recent or historical)
-- `fallback`: bestseller-only (no user signal)
+**Implication:** bestsellers are always in the scored pool. A user's stale cart/view can be outranked by generic bestsellers above the crossover thresholds. This is intentional under the locked Path A scoring model — fresh popularity is preferred over stale intent.
 
-### Data Volume
-- Target audience: ~1.8M no-YMM active users
-- Upper bound output (from investigation): ~168K users with signal in 180 days + bestseller fallback
-- Expected output: ≥150K with signal, up to ~1.8M if bestseller fallback is enabled for no-signal users
-- Processing: on-demand pipeline runs
+Weights and taus are inherited from the current branch and treated as starting values. Tuning is deferred to post-launch A/B analysis.
 
-## Architecture & Approach
+### Step 4 — Filters
 
-### 1) User Universe
-No-YMM users with valid email. Disjoint from v5.18's YMM universe. Defined as: any user from `ingestion_unified_attributes_schema_incremental` with valid email but missing ≥1 of `{v1_year, v1_make, v1_model}` (or where year fails `SAFE_CAST INT64`).
+Same filter shape as V5.18, with one substitution:
 
-### 2) Signal Extraction
-Reuse `staged_events` pattern from `sql/recommendations/v5_18_fitment_recommendations.sql:185-260`. For each event, extract a (user_id, sku, event_ts, signal_type) tuple:
-
-| Event | SKU property pattern | Signal type |
-|-------|----------------------|-------------|
-| `VIEWED PRODUCT` | `^prod(?:uct)?id$` | `view` |
-| `CART UPDATE` | `^items_[0-9]+\.productid$` | `cart` |
-| `ORDERED PRODUCT` / `PLACED ORDER` / `CONSUMER WEBSITE ORDER` | (existing v5.18 patterns) | `purchase_recent` |
-| `import_orders.ITEM` | — | `purchase_historical` |
-
-Event window: events table last 365 days; `import_orders` all-time. Consistent with v5.18's Sep 1, 2025 boundary between recent and historical.
-
-### 3) Scoring Formula
-For each (user, sku) pair:
-
-```
-score(u, s) = Σ_{signal ∈ signals(u, s)} weight[signal] × exp(-age_days[signal] / tau[signal])
-```
-
-Initial parameters (tunable as `DECLARE` constants):
-
-| Signal | weight | tau (days) | Rationale |
-|--------|--------|------------|-----------|
-| cart | 10.0 | 7 | 70% same-SKU conversion — strongest signal |
-| view | 5.0 | 3 | 30% same-SKU conversion, very fast decay (90% within 14d) |
-| purchase_recent | 3.0 | 30 | Proven intent but not repeat-purchase target |
-| purchase_historical | 2.0 | 180 | Long-proven taste, low recency |
-| bestseller | 1.0 | ∞ | No decay; lowest confidence catch-all |
-
-### 4) Candidate Generation
-Union of:
-- User-signaled SKUs (viewed / carted / purchased, as scored above)
-- Top-N global bestsellers (last 365 days of orders) as fallback with `bestseller` signal
-
-### 5) Filters (reuse v5.18 logic)
-1. Purchase exclusion: drop SKUs the user bought in last 365 days (variant-normalized)
-2. Price floor: `$25` (tunable)
+1. **Lifetime purchase exclusion** — drop any (user, SKU) where the user has ever purchased that SKU (events + `import_orders`, all-time). This is the only filter difference vs V5.18.
+2. Price floor `$50`
 3. HTTPS image required
-4. Refurbished and commodity items excluded (reuse v5.18 `import_items_tags` + PartType filters)
-5. Variant dedup: strip `[0-9][BRGP]$` suffix
-6. Diversity cap: max 2 SKUs per `PartType` per user
+4. Refurbished and commodity items excluded (`import_items_tags` + PartType filters per V5.18)
+5. Variant dedup — strip `[0-9][BRGP]$` suffix
+6. Diversity cap — max 2 SKUs per `PartType` per user
 
-### 6) Selection
-Rank by score DESC, take top 4. Require ≥1 rec per user (NULL fill beyond rec count). If user has zero candidates after filters, populate from bestsellers so fallback engagement_tier users still receive recs.
+### Step 5 — Selection
 
-## Open Questions
-- [ ] Tau values are initial guesses grounded in decay data. Grid-search during QA or ship defaults and tune via A/B?
-- [ ] Bestseller granularity: overall top sellers, or per-PartType top sellers (more diverse fallback)?
-- [ ] Should `signal_age_days` be kept in production output (analytics-only column)?
-- [ ] Should we cap bestseller-only output users (e.g., only emit fallback for opted-in users)?
+1. Rank surviving (user, SKU) candidates by score DESC, take top 4
+2. **Hard fallback:** if a user has 0 surviving candidates after filters, fill all 4 slots from the bestseller pool — ensures every non-fitment user receives recommendations
+
+Fewer than 4 surviving non-bestseller candidates? Backfill from bestsellers (already in the scored pool, so this happens naturally via the rank step).
+
+### Step 6 — Projection into shared schema
+
+Each non-fitment row is projected into the V5.18 column set per the Output Schema table above. Critical literals:
+- `rec1..4_type = 'non_fitment'`
+- `v1_year = v1_make = v1_model = 'UNKNOWN'`
+- `rec1..4_pop_source = NULL`
+- `engagement_tier = NULL`
+- `fitment_count = NULL`
+- `pipeline_version = 'v5.19'`
+
+## Materialization Strategy
+
+**V5.18 must run before V5.19 each release cycle.** The V5.19 SQL performs:
+
+1. Assert V5.18 staging is non-empty (loud error if empty):
+   ```sql
+   SELECT IF(
+     (SELECT COUNT(*) FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`) = 0,
+     ERROR('V5.18 fitment staging is empty — run V5.18 before V5.19'),
+     'OK'
+   );
+   ```
+2. Snapshot V5.18 staging into a per-run-overwritten V5.19 source table (release-cycle snapshot):
+   ```sql
+   CREATE OR REPLACE TABLE `auxia-reporting.temp_holley_v5_19.fitment_source_snapshot` AS
+   SELECT * FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
+   ```
+   The snapshot is a fixed table name, overwritten on each V5.19 run. It is not per-run uniquely named; the goal is to stop V5.19's UNION from reading V5.18's staging table while a concurrent V5.18 rerun mutates it, not to retain history. This is required because V5.18's staging table is itself `CREATE OR REPLACE`'d every run; reading it directly during V5.19's UNION is racy.
+3. Build non-fitment candidate rows in `temp_holley_v5_19.*` working tables
+4. Apply lifetime exclusion + filters + selection
+5. Project non-fitment rows into V5.18 schema
+6. UNION ALL: snapshotted fitment rows (re-projected with `pipeline_version = 'v5.19'` and a fresh `generated_at = CURRENT_TIMESTAMP()`) + non-fitment rows (also tagged with the same fresh `generated_at`) → `temp_holley_v5_19.final_vehicle_recommendations`. All rows in the shared table carry one logical release timestamp.
+7. Validate (go/no-go + QA)
+8. Deploy combined shared table to `company_1950_jp.final_vehicle_recommendations`
+
+## Why Purchase Signals Are Dropped
+
+V5.19 generates candidates as **exact SKUs** (the same SKU you carted/viewed). Lifetime exclusion then removes any SKU you have ever purchased. So:
+- `purchase_recent` candidate = SKU you bought → always excluded → never appears as a recommendation
+- `purchase_historical` candidate = SKU you bought → always excluded → never appears as a recommendation
+
+Scoring purchase signals would burn CPU on candidates that always die at the filter step. They are removed from the scoring code entirely under V5.19.
+
+A future V5.20 could revive purchase signals by switching to **related-item** candidates (same PartType, same brand, complementary parts) instead of exact SKU.
+
+## Disjointness Guarantee
+
+By construction:
+- V5.18 universe = users with **complete** YMM
+- V5.19 universe = users with **incomplete or missing** YMM, anti-joined against V5.18 by email
+
+Validated in go/no-go: no email appears in both `rec1_type = 'fitment'` and `rec1_type = 'non_fitment'` row partitions.
+
+## QA Migration (Mandatory)
+
+The existing `sql/validation/qa_checks.sql` enforces V5.18-only invariants that will fail when V5.19 rows land in the shared table. Required changes:
+
+| Existing check | Change |
+|----------------|--------|
+| `rec*_type = 'fitment'` (implicit invariant) | enforce only when `rec1_type = 'fitment'`; allow `'non_fitment'` rows |
+| `engagement_tier IN ('hot','cold')` (line 233) | enforce only when `rec1_type = 'fitment'`; allow `NULL` when `rec1_type = 'non_fitment'` |
+| `fitment_count IN (3,4)` (line 216) | enforce only when `rec1_type = 'fitment'`; allow `NULL` when `rec1_type = 'non_fitment'` |
+| (new) cross-slot consistency | within a row, all populated `recN_type` slots equal each other |
+| (new) pipeline_version single-valued | `COUNT(DISTINCT pipeline_version) = 1` across the shared table |
+
+Plus existing universal checks (price ≥ $50, HTTPS images, no duplicates within row, etc.) apply to all rows regardless of audience.
 
 ## Success Criteria
-- [ ] 0 overlap with v5.18's YMM users (email_lower disjoint from `final_vehicle_recommendations`)
-- [ ] ≥150K users with signal-based recs
-- [ ] 0 duplicate SKUs within a user row
-- [ ] 0 prices < $25
-- [ ] 0 refurbished products
-- [ ] All recs have HTTPS images
-- [ ] Diversity cap honored (≤2 per PartType per user)
-- [ ] `dominant_signal` ∈ {cart, view, purchase_recent, purchase_historical, bestseller}
-- [ ] `engagement_tier` ∈ {hot, warm, cold, fallback}
-- [ ] Score ordering monotonic across rec slots within a user
 
-## Evaluation Metrics
-| Metric | Target |
-|--------|--------|
-| Users served | ≥150K with signal |
-| Purchase exclusion violations | 0 |
-| Fitment mismatch (N/A — this pipeline is non-fitment) | — |
-| Duplicate SKU rows | 0 |
-| Price floor violations | 0 |
-| Rec coverage (rec_count=4 share) | Monitor |
-
-Downstream A/B metric (deferred — separate deploy step):
-- Email CTR on v5.19 recs vs. non-personalized baseline for no-YMM segment
+- [ ] 0 emails appearing in both `rec1_type = 'fitment'` and `rec1_type = 'non_fitment'` partitions
+- [ ] V5.18 fitment row count and content unchanged vs current V5.18-only output (modulo `pipeline_version` re-tagging)
+- [ ] ≥150K non-fitment users with signal-based (cart or view) recs
+- [ ] Up to ~1.8M non-fitment users covered with bestseller fallback
+- [ ] 0 duplicate SKUs within any row (any audience)
+- [ ] 0 prices < $50 (any audience)
+- [ ] 0 refurbished products (any audience)
+- [ ] All recs have HTTPS images (any audience)
+- [ ] Diversity cap honored (≤2 per PartType per user, any audience)
+- [ ] 0 lifetime purchase exclusion violations for `rec1_type = 'non_fitment'` rows
+- [ ] 0 365-day purchase exclusion violations for `rec1_type = 'fitment'` rows
+- [ ] Within each row: all populated `recN_type` slots equal each other
+- [ ] `pipeline_version = 'v5.19'` for every row, no other values present
+- [ ] No `purchase_recent` / `purchase_historical` values appear in V5.19 working-table signal enums
 
 ## Test Plan
 
 ### SQL Validation
-- [ ] Dry-run pipeline SQL via `bq query --dry_run`
-- [ ] Execute pipeline in `temp_holley_v5_19` dataset
+- [ ] Dry-run the rewritten V5.19 pipeline SQL via `bq query --dry_run`
+- [ ] Dry-run the migrated `qa_checks.sql`
+- [ ] Dry-run the rewritten `v5_19_go_no_go_eval.sql`
 
-### QA Validation (new go/no-go eval)
-- [ ] `sql/validation/v5_19_go_no_go_eval.sql` mirrors v5.18's severity-ranked checks
-- [ ] Extend `qa_checks.sql` to branch on `pipeline_version` ∈ {v5.18, v5.19}
+### Staging Execution
+- [ ] Run V5.18 to populate `temp_holley_v5_18.final_vehicle_recommendations`
+- [ ] Run V5.19 (which snapshots V5.18 staging, then UNIONs)
+- [ ] Confirm `temp_holley_v5_19.final_vehicle_recommendations` exists with both row types
 
-### Targeted Validation
-- [ ] Pick 20 users across signal types (5 cart-heavy / 5 view-heavy / 5 purchase-heavy / 5 bestseller-only). Manually verify recs correlate with signals.
-- [ ] Confirm coverage ≥100K users with signal (investigation estimated 168K with 180d signal)
+### QA Validation
+- [ ] `qa_checks.sql` passes against shared table
+- [ ] `v5_19_go_no_go_eval.sql` passes against shared table
+- [ ] Disjointness check passes
+- [ ] V5.18-row invariants identical to V5.18-only baseline (modulo pipeline_version)
+
+### Targeted Sample
+- [ ] 5 cart-heavy non-fitment users — recs reflect their cart history
+- [ ] 5 view-heavy non-fitment users — recs reflect their view history
+- [ ] 5 bestseller-only non-fitment users — recs are popular SKUs
+- [ ] 5 fitment users from V5.18 source — recs match what V5.18 alone would produce
 
 ## Dependencies
-- [ ] Downstream email routing system ingests `dominant_signal` column
-- [ ] Treatment system can accommodate non-YMM user segment
-- [ ] Sign-off on tau values and weights before production deploy
+
+- [ ] V5.18 fitment pipeline must run successfully **before** V5.19 each release cycle
+- [ ] Downstream email pipeline reads existing schema columns only (`email_lower`, `rec_part_1..4`, prices, images, `rec1..4_type` for routing)
+- [ ] No downstream consumer should be wired to a `final_non_fitment_recommendations` table (the as-built branch's separate-table design is dropped — confirm no consumers exist before deleting the table reference)
+
+## Files Affected
+
+| File | Change |
+|------|--------|
+| `sql/recommendations/v5_19_non_fitment_recommendations.sql` | Drop separate-table write target; lifetime exclusion (was 365d); drop purchase scoring; price floor $50 (was $25); add fitment-source snapshot + UNION ALL; emit shared schema with locked literals |
+| `sql/recommendations/v5_18_fitment_recommendations.sql` | No algorithmic change. Optional: change `pipeline_version` literal from `'v5.18'` → `'v5.19'` (or do this only at V5.19 UNION step — easier) |
+| `sql/validation/qa_checks.sql` | Parameterize value-set checks per `rec1_type`; add cross-slot and single-pipeline_version invariants |
+| `sql/validation/v5_19_go_no_go_eval.sql` | Retarget to shared table; validate disjointness, lifetime exclusion for non-fitment rows, V5.18 invariants for fitment rows |
+| `docs/architecture/v5_18_architecture_specification.md` | Update value vocabularies for `rec*_type`, `engagement_tier`, `fitment_count`; document the audience discriminator and snapshot+UNION materialization |
+| `docs/release_notes.md` | Rewrite V5.19 entry around shared table, lifetime exclusion, V5.18 → V5.19 ordering, mandatory snapshot |
 
 ## Implementation Notes
+
 (Fill during/after implementation)
 
 ---
-Created: 2026-04-15
-Author: Praveen + Claude
+Created: 2026-04-15 (original draft)
+Rewritten: 2026-04-16 from `tasks/v5_19_restructure_plan.md` r7
+Author: Praveen + Claude + Codex
 Approved by: [TBD]

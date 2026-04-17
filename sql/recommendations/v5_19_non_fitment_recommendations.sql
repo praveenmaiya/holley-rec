@@ -1,22 +1,32 @@
 -- ==================================================================================================
--- Holley Non-Fitment Product Recommendations – V5.19 (No-YMM Users)
+-- Holley Recommendations – V5.19 (Release: fitment + non-fitment in one shared table)
 -- --------------------------------------------------------------------------------------------------
 -- Purpose:
---   Extends recommendations to active users WITHOUT complete v1 YMM (~1.8M audience).
---   Disjoint from v5.18's YMM output — same users never appear in both pipelines.
+--   V5.19 is a RELEASE that extends V5.18's fitment output to also cover no-YMM users.
+--   Both audiences land in the SAME table `final_vehicle_recommendations` with the SAME V5.18
+--   column set. `rec1..4_type IN ('fitment','non_fitment')` is the row-level audience marker;
+--   every row in the shared table carries `pipeline_version = 'v5.19'`.
 --
--- Signal Hierarchy (unified recency-weighted scoring):
---   score(u, sku) = Σ weight[signal] × exp(-age_days / tau[signal])
+-- Audiences (disjoint by email):
+--   Fitment     (~457K, have YMM)   → V5.18 algorithm, re-projected into the shared table
+--   Non-fitment (~1.8M, no YMM)     → V5.19 behavior-based algorithm (this file)
 --
---   cart                 weight=10, tau=7d
---   view                 weight=5,  tau=3d
---   purchase_recent      weight=3,  tau=30d  (events table, last 365d)
---   purchase_historical  weight=2,  tau=180d (import_orders, all time)
---   bestseller           weight=1,  tau=∞    (global fallback)
+-- V5.19 non-fitment ranking shape:
+--   Primary path:
+--     purchase/cart/view seeds
+--       -> co-purchase graph expansion
+--       -> lifetime/cart/recent-browse exclusion
+--       -> related-item ranking
+--   Backup floor:
+--     current exact-SKU cart/view+bestseller engine, demoted to a flow-safe backfill layer
+--   Purchase history is reintroduced only as a SEED, never as the final exact SKU.
 --
--- Output:
---   Wide-format table with up to 4 recs per user + dominant_signal (for email routing)
---   + engagement_tier (hot/warm/cold/fallback).
+-- Materialization:
+--   1. Non-fitment candidates built into temp_holley_v5_19.*
+--   2. V5.18 staging snapshotted into temp_holley_v5_19.fitment_source_snapshot (per-run
+--      overwrite) to stop the UNION from reading V5.18's CREATE-OR-REPLACE staging table.
+--   3. UNION ALL of snapshot + non-fitment pivot → temp_holley_v5_19.final_vehicle_recommendations
+--      with a single fresh release timestamp (`pipeline_start`) on every row.
 --
 -- Ticket: AUX-14029
 -- --------------------------------------------------------------------------------------------------
@@ -27,17 +37,21 @@
 --   deploy_to_production defaults to FALSE. Never writes to company_1950_jp unless flipped.
 -- ==================================================================================================
 
--- Pipeline version
+-- Pipeline version (shared-table release tag — every row carries this value)
 DECLARE pipeline_version STRING DEFAULT 'v5.19';
 
 -- Working dataset (intermediate + staging final)
 DECLARE target_project STRING DEFAULT 'auxia-reporting';
 DECLARE target_dataset STRING DEFAULT 'temp_holley_v5_19';
 
--- Production dataset (guarded deployment)
+-- V5.18 staging (read-only source for the fitment snapshot)
+DECLARE v5_18_project STRING DEFAULT 'auxia-reporting';
+DECLARE v5_18_dataset STRING DEFAULT 'temp_holley_v5_18';
+
+-- Production dataset (guarded deployment — shared table name for both audiences)
 DECLARE prod_project STRING DEFAULT 'auxia-reporting';
 DECLARE prod_dataset STRING DEFAULT 'company_1950_jp';
-DECLARE prod_table_name STRING DEFAULT 'final_non_fitment_recommendations';
+DECLARE prod_table_name STRING DEFAULT 'final_vehicle_recommendations';
 
 -- Deployment flag (SAFETY: default FALSE — never touch production)
 DECLARE deploy_to_production BOOL DEFAULT FALSE;
@@ -45,48 +59,57 @@ DECLARE deploy_to_production BOOL DEFAULT FALSE;
 -- Backup suffix (timestamp for snapshot copies)
 DECLARE backup_suffix STRING DEFAULT FORMAT_TIMESTAMP('%Y_%m_%d_%H%M%S', CURRENT_TIMESTAMP());
 
--- Signal window: events table last 365 days (align with v5.18 convention)
+-- Signal window: events table last 365 days
 DECLARE signal_window_end   DATE DEFAULT CURRENT_DATE();
 DECLARE signal_window_start DATE DEFAULT DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY);
 
--- Fixed boundary between historical (import_orders) and recent (events table) purchase
--- signals. Matches v5.18 convention. Used EXCLUSIVELY on the hist side (order_date <
--- recent_boundary) and INCLUSIVELY on the event side (event_ts >= recent_boundary) so
--- the same order never double-contributes to purchase_recent + purchase_historical.
+-- Fixed boundary used only for bestseller construction (splits hist vs recent order counts so
+-- the same order can't contribute to both halves of the 365d bestseller window).
 DECLARE recent_boundary DATE DEFAULT DATE '2025-09-01';
 
--- Historical purchase window (import_orders, strictly before recent_boundary)
-DECLARE hist_pop_start DATE DEFAULT DATE '2024-01-01';
-DECLARE hist_pop_end   DATE DEFAULT DATE '2025-09-01';  -- exclusive upper bound
-
--- Year range for ORDER_DATE pre-filter (avoids PARSE_DATE on every row)
-DECLARE min_prefilter_year INT64 DEFAULT EXTRACT(YEAR FROM hist_pop_start);
+-- Year prefilter for import_orders string-date queries (bytes optimization).
+-- Kept wide to cover lifetime purchase exclusion.
+DECLARE min_prefilter_year INT64 DEFAULT 2000;
 DECLARE max_prefilter_year INT64 DEFAULT EXTRACT(YEAR FROM CURRENT_DATE());
 
--- Purchase exclusion window
-DECLARE purchase_window_days INT64 DEFAULT 365;
-
--- Pricing / filtering
-DECLARE min_price FLOAT64 DEFAULT 25.0;
+-- Pricing / filtering (V5.19 matches V5.18's $50 floor — locked contract item #8)
+DECLARE min_price FLOAT64 DEFAULT 50.0;
 
 -- Signal weights (tunable)
-DECLARE w_cart                 FLOAT64 DEFAULT 10.0;
-DECLARE w_view                 FLOAT64 DEFAULT 5.0;
-DECLARE w_purchase_recent      FLOAT64 DEFAULT 3.0;
-DECLARE w_purchase_historical  FLOAT64 DEFAULT 2.0;
-DECLARE w_bestseller           FLOAT64 DEFAULT 1.0;
+DECLARE w_cart       FLOAT64 DEFAULT 10.0;
+DECLARE w_view       FLOAT64 DEFAULT 5.0;
+DECLARE w_bestseller FLOAT64 DEFAULT 1.0;
 
 -- Decay tau in days (tunable)
-DECLARE tau_cart                FLOAT64 DEFAULT 7.0;
-DECLARE tau_view                FLOAT64 DEFAULT 3.0;
-DECLARE tau_purchase_recent     FLOAT64 DEFAULT 30.0;
-DECLARE tau_purchase_historical FLOAT64 DEFAULT 180.0;
+DECLARE tau_cart FLOAT64 DEFAULT 7.0;
+DECLARE tau_view FLOAT64 DEFAULT 3.0;
 -- tau_bestseller is effectively infinite (no decay applied)
 
 -- Selection / diversity
 DECLARE max_parttype_per_user INT64 DEFAULT 2;
 DECLARE required_recs INT64 DEFAULT 4;
 DECLARE min_required_recs INT64 DEFAULT 1;
+
+-- Flow-safe browse exclusion window (locked design decision)
+DECLARE browse_recovery_lookback_days INT64 DEFAULT 7;
+
+-- Related-item graph thresholds
+DECLARE min_co_purchase_support INT64 DEFAULT 3;
+DECLARE min_seed_buyer_count INT64 DEFAULT 5;
+
+-- Seed weights (initial implementation defaults; tunable)
+DECLARE w_purchase_seed FLOAT64 DEFAULT 3.0;
+DECLARE w_cart_seed     FLOAT64 DEFAULT 2.0;
+DECLARE w_view_seed     FLOAT64 DEFAULT 1.0;
+
+-- Seed recency decay in days
+DECLARE tau_purchase_seed FLOAT64 DEFAULT 90.0;
+DECLARE tau_cart_seed     FLOAT64 DEFAULT 14.0;
+DECLARE tau_view_seed     FLOAT64 DEFAULT 30.0;
+
+-- Related-item path is the primary source; its persisted scores must stay above the
+-- backup floor path so rec*_score ordering matches the actual rank precedence.
+DECLARE related_score_offset FLOAT64 DEFAULT 0.0;
 
 -- Bestseller fallback size
 DECLARE top_n_bestsellers INT64 DEFAULT 20;
@@ -96,25 +119,67 @@ DECLARE min_noymm_users INT64 DEFAULT 500000;
 DECLARE min_final_users INT64 DEFAULT 150000;
 
 -- Table names
-DECLARE tbl_noymm_users STRING DEFAULT FORMAT('`%s.%s.no_ymm_users`', target_project, target_dataset);
-DECLARE tbl_ymm_users   STRING DEFAULT FORMAT('`%s.%s.ymm_users_for_exclusion`', target_project, target_dataset);
-DECLARE tbl_staged_signals STRING DEFAULT FORMAT('`%s.%s.staged_signals`', target_project, target_dataset);
-DECLARE tbl_hist_purchases STRING DEFAULT FORMAT('`%s.%s.hist_purchase_signals`', target_project, target_dataset);
-DECLARE tbl_sku_prices STRING DEFAULT FORMAT('`%s.%s.sku_prices`', target_project, target_dataset);
-DECLARE tbl_sku_images STRING DEFAULT FORMAT('`%s.%s.sku_image_urls`', target_project, target_dataset);
-DECLARE tbl_eligible_skus STRING DEFAULT FORMAT('`%s.%s.eligible_skus`', target_project, target_dataset);
-DECLARE tbl_bestsellers STRING DEFAULT FORMAT('`%s.%s.bestsellers`', target_project, target_dataset);
-DECLARE tbl_purchase_excl STRING DEFAULT FORMAT('`%s.%s.user_purchased_365d`', target_project, target_dataset);
-DECLARE tbl_raw_signal_ages STRING DEFAULT FORMAT('`%s.%s.user_raw_signal_ages`', target_project, target_dataset);
-DECLARE tbl_scored STRING DEFAULT FORMAT('`%s.%s.scored_candidates`', target_project, target_dataset);
-DECLARE tbl_diversity STRING DEFAULT FORMAT('`%s.%s.diversity_filtered`', target_project, target_dataset);
-DECLARE tbl_ranked STRING DEFAULT FORMAT('`%s.%s.ranked_recommendations`', target_project, target_dataset);
-DECLARE tbl_final STRING DEFAULT FORMAT('`%s.%s.final_non_fitment_recommendations`', target_project, target_dataset);
+DECLARE tbl_noymm_users       STRING DEFAULT FORMAT('`%s.%s.no_ymm_users`', target_project, target_dataset);
+DECLARE tbl_ymm_users         STRING DEFAULT FORMAT('`%s.%s.ymm_users_for_exclusion`', target_project, target_dataset);
+DECLARE tbl_staged_signals    STRING DEFAULT FORMAT('`%s.%s.staged_signals`', target_project, target_dataset);
+DECLARE tbl_sku_prices        STRING DEFAULT FORMAT('`%s.%s.sku_prices`', target_project, target_dataset);
+DECLARE tbl_sku_images        STRING DEFAULT FORMAT('`%s.%s.sku_image_urls`', target_project, target_dataset);
+DECLARE tbl_eligible_skus     STRING DEFAULT FORMAT('`%s.%s.eligible_skus`', target_project, target_dataset);
+DECLARE tbl_bestsellers       STRING DEFAULT FORMAT('`%s.%s.bestsellers`', target_project, target_dataset);
+DECLARE tbl_purchase_history  STRING DEFAULT FORMAT('`%s.%s.user_purchase_history`', target_project, target_dataset);
+DECLARE tbl_purchase_excl     STRING DEFAULT FORMAT('`%s.%s.user_purchased_lifetime`', target_project, target_dataset);
+DECLARE tbl_co_purchase_graph STRING DEFAULT FORMAT('`%s.%s.co_purchase_graph`', target_project, target_dataset);
+DECLARE tbl_active_cart       STRING DEFAULT FORMAT('`%s.%s.active_cart_context`', target_project, target_dataset);
+DECLARE tbl_recent_browse     STRING DEFAULT FORMAT('`%s.%s.recent_browse_context`', target_project, target_dataset);
+DECLARE tbl_seed_skus         STRING DEFAULT FORMAT('`%s.%s.seed_sku_per_user`', target_project, target_dataset);
+DECLARE tbl_related_pool      STRING DEFAULT FORMAT('`%s.%s.related_candidate_pool`', target_project, target_dataset);
+DECLARE tbl_related_filtered  STRING DEFAULT FORMAT('`%s.%s.related_filtered`', target_project, target_dataset);
+DECLARE tbl_related_ranked    STRING DEFAULT FORMAT('`%s.%s.related_ranked`', target_project, target_dataset);
+DECLARE tbl_floor_scored      STRING DEFAULT FORMAT('`%s.%s.floor_scored_candidates`', target_project, target_dataset);
+DECLARE tbl_floor_filtered    STRING DEFAULT FORMAT('`%s.%s.floor_filtered`', target_project, target_dataset);
+DECLARE tbl_floor_ranked      STRING DEFAULT FORMAT('`%s.%s.floor_ranked`', target_project, target_dataset);
+DECLARE tbl_ranked            STRING DEFAULT FORMAT('`%s.%s.ranked_recommendations`', target_project, target_dataset);
+DECLARE tbl_final_nf          STRING DEFAULT FORMAT('`%s.%s.final_non_fitment_intermediate`', target_project, target_dataset);
+DECLARE tbl_fitment_snapshot  STRING DEFAULT FORMAT('`%s.%s.fitment_source_snapshot`', target_project, target_dataset);
+DECLARE tbl_final             STRING DEFAULT FORMAT('`%s.%s.final_vehicle_recommendations`', target_project, target_dataset);
 
 -- Execution timing
 DECLARE step_start TIMESTAMP;
 DECLARE step_end TIMESTAMP;
 DECLARE pipeline_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP();
+
+-- Row count used to assert V5.18 staging is populated before snapshot
+DECLARE v5_18_row_count INT64;
+
+-- Keep related-item scores above the floor path even if floor weights change.
+SET related_score_offset = w_cart + w_view + w_bestseller + 1.0;
+
+-- ====================================================================================
+-- PRE-STEP: SNAPSHOT V5.18 FITMENT STAGING ONCE
+-- ====================================================================================
+-- Snapshot once up front so every downstream read in this run sees the same fitment slice.
+-- This closes the Step 0a vs Step 3.5 race where V5.18 could be re-run between reads.
+-- ====================================================================================
+SET step_start = CURRENT_TIMESTAMP();
+
+EXECUTE IMMEDIATE FORMAT("""
+SELECT COUNT(*) FROM `%s.%s.final_vehicle_recommendations`
+""", v5_18_project, v5_18_dataset) INTO v5_18_row_count;
+
+IF v5_18_row_count = 0 THEN
+  RAISE USING MESSAGE = 'V5.18 fitment staging is empty — run V5.18 before V5.19';
+END IF;
+
+EXECUTE IMMEDIATE FORMAT("""
+CREATE OR REPLACE TABLE %s
+CLUSTER BY email_lower AS
+SELECT * FROM `%s.%s.final_vehicle_recommendations`
+""", tbl_fitment_snapshot, v5_18_project, v5_18_dataset);
+
+SET step_end = CURRENT_TIMESTAMP();
+SELECT FORMAT('[Pre-step] Fitment snapshot (%d rows): %d seconds',
+  v5_18_row_count,
+  TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
 
 -- ====================================================================================
 -- STEP 0: USER UNIVERSE (YMM-for-exclusion FIRST, then No-YMM anti-joined on email)
@@ -124,12 +189,21 @@ DECLARE pipeline_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP();
 --       Matches v5.18's user universe.
 --   0b. no_ymm_users: user_ids where THAT user_id has incomplete YMM, AND the email
 --       never appears with complete YMM on any other user_id (anti-join on email).
---       This guarantees v5.19 output is disjoint from v5.18 output at the email level,
---       not merely at the user_id level.
+--       This guarantees v5.19 non-fitment rows are disjoint from v5.18 fitment rows
+--       at the email level, not merely at the user_id level.
 -- ====================================================================================
 SET step_start = CURRENT_TIMESTAMP();
 
--- Step 0a: ymm_users_for_exclusion — emails with at least one complete-YMM user_id
+-- Step 0a: ymm_users_for_exclusion — emails that will appear in the fitment slice.
+-- Union of:
+--   (i)  emails with at least one complete-YMM user_id in current attributes, and
+--   (ii) emails currently present in the snapshotted fitment output.
+-- Reason (ii) matters: V5.18 snapshots are produced asynchronously on their own
+-- cycle, so an email that had complete YMM at V5.18 time may have since lost that
+-- attribute (update_timestamp moved, user_properties nulled, etc.). Without (ii),
+-- such an email would be classified as no-YMM and produce a non-fitment row
+-- alongside the still-present fitment row, violating the email-level disjoint
+-- invariant.
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY email_lower AS
@@ -172,15 +246,25 @@ pivoted AS (
     MAX(IF(property_name = 'v1_model', property_value, NULL)) AS v1_model
   FROM latest_props
   GROUP BY user_id
+),
+current_ymm_emails AS (
+  SELECT DISTINCT email_lower
+  FROM pivoted
+  WHERE email_lower IS NOT NULL
+    AND v1_year IS NOT NULL
+    AND SAFE_CAST(v1_year AS INT64) IS NOT NULL
+    AND v1_make IS NOT NULL
+    AND v1_model IS NOT NULL
+),
+fitment_snapshot_emails AS (
+  SELECT DISTINCT email_lower
+  FROM %s
+  WHERE email_lower IS NOT NULL
 )
-SELECT DISTINCT email_lower
-FROM pivoted
-WHERE email_lower IS NOT NULL
-  AND v1_year IS NOT NULL
-  AND SAFE_CAST(v1_year AS INT64) IS NOT NULL
-  AND v1_make IS NOT NULL
-  AND v1_model IS NOT NULL;
-""", tbl_ymm_users);
+SELECT email_lower FROM current_ymm_emails
+UNION DISTINCT
+SELECT email_lower FROM fitment_snapshot_emails;
+""", tbl_ymm_users, tbl_fitment_snapshot);
 
 SET step_end = CURRENT_TIMESTAMP();
 SELECT FORMAT('[Step 0a] YMM exclusion set: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
@@ -262,8 +346,9 @@ USING min_noymm_users AS min_noymm_users;
 -- ====================================================================================
 -- STEP 1: STAGED SIGNALS (view / cart / purchase_recent from events table)
 -- ====================================================================================
--- Reuses v5.18 staged_events extraction pattern (prod(uct)?id, items_N.productid, skus_N)
--- but keeps signal type so we can score by event class.
+-- Reuses v5.18 staged_events extraction pattern (prod(uct)?id, items_N.productid, skus_N).
+-- Note: purchase_recent is still extracted here — used for lifetime purchase exclusion
+-- (Step 2) and bestseller construction (Step 1.5). It is NOT used in scoring (Step 3).
 -- ====================================================================================
 SET step_start = CURRENT_TIMESTAMP();
 
@@ -355,14 +440,9 @@ SELECT
   COALESCE(price_item, price_main) AS price,
   COALESCE(image_item, image_main) AS image_url_raw
 FROM aggregated
-WHERE sku IS NOT NULL AND signal_type IS NOT NULL
-  -- Enforce v5.18 convention: purchase events before recent_boundary belong to
-  -- import_orders (purchase_historical), not the events table. Prevents the same
-  -- order from contributing to both purchase_recent and purchase_historical.
-  AND NOT (signal_type = 'purchase_recent' AND DATE(event_ts) < @recent_boundary);
+WHERE sku IS NOT NULL AND signal_type IS NOT NULL;
 """, tbl_staged_signals)
-USING signal_window_start AS signal_window_start, signal_window_end AS signal_window_end,
-      recent_boundary AS recent_boundary;
+USING signal_window_start AS signal_window_start, signal_window_end AS signal_window_end;
 
 SET step_end = CURRENT_TIMESTAMP();
 SELECT FORMAT('[Step 1] Staged signals: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
@@ -414,54 +494,7 @@ WHERE rn = 1 AND image_url LIKE 'https://%%';
 """, tbl_sku_images, tbl_staged_signals);
 
 -- ====================================================================================
--- STEP 1.3: HISTORICAL PURCHASE SIGNALS (import_orders)
--- ====================================================================================
--- Joins to user_id via email. Produces (user_id, sku, order_date) rows.
--- Also produces the 365d purchase exclusion set (reused in Step 2).
--- ====================================================================================
-SET step_start = CURRENT_TIMESTAMP();
-
-EXECUTE IMMEDIATE FORMAT("""
-CREATE OR REPLACE TABLE %s
-CLUSTER BY user_id, sku AS
-WITH import_filtered AS (
-  SELECT
-    LOWER(TRIM(SHIP_TO_EMAIL)) AS email_lower,
-    REGEXP_REPLACE(UPPER(TRIM(ITEM)), r'([0-9])[BRGP]$', r'\\1') AS sku,
-    SAFE.PARSE_DATE('%%A, %%B %%d, %%Y', ORDER_DATE) AS order_date_parsed
-  FROM `auxia-gcp.data_company_1950.import_orders`
-  WHERE ITEM IS NOT NULL
-    AND NOT (
-      ITEM LIKE 'EXT-%%' OR
-      ITEM LIKE 'GIFT-%%' OR
-      ITEM LIKE 'WARRANTY-%%' OR
-      ITEM LIKE 'SERVICE-%%' OR
-      ITEM LIKE 'PREAUTH-%%'
-    )
-    AND SHIP_TO_EMAIL IS NOT NULL
-    AND SAFE_CAST(REGEXP_EXTRACT(ORDER_DATE, r'\\b(20[0-9]{2})\\b') AS INT64) BETWEEN @min_prefilter_year AND @max_prefilter_year
-)
-SELECT
-  u.user_id,
-  f.sku,
-  f.order_date_parsed AS order_date
-FROM import_filtered f
-JOIN %s u
-  ON f.email_lower = u.email_lower
-WHERE f.order_date_parsed IS NOT NULL
-  -- Historical window is [hist_pop_start, recent_boundary) — strictly before the
-  -- fixed Sep 1, 2025 split that separates historical from recent purchases.
-  AND f.order_date_parsed >= @hist_pop_start
-  AND f.order_date_parsed <  @recent_boundary;
-""", tbl_hist_purchases, tbl_noymm_users)
-USING min_prefilter_year AS min_prefilter_year, max_prefilter_year AS max_prefilter_year,
-      hist_pop_start AS hist_pop_start, recent_boundary AS recent_boundary;
-
-SET step_end = CURRENT_TIMESTAMP();
-SELECT FORMAT('[Step 1.3] Historical purchases joined: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
-
--- ====================================================================================
--- STEP 1.4: ELIGIBLE SKUS (price floor, HTTPS image, refurb/commodity exclusions)
+-- STEP 1.3: ELIGIBLE SKUS (price floor, HTTPS image, refurb/commodity exclusions)
 -- ====================================================================================
 -- Unlike v5.18, this is not fitment-gated — any SKU in catalog with acceptable
 -- price/image/tags is eligible. Variant normalization happens later in dedup step.
@@ -524,7 +557,7 @@ SELECT sku, part_type, image_url, price FROM priced;
 USING min_price AS min_price;
 
 SET step_end = CURRENT_TIMESTAMP();
-SELECT FORMAT('[Step 1.4] Eligible SKUs: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
+SELECT FORMAT('[Step 1.3] Eligible SKUs: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
 
 EXECUTE IMMEDIATE FORMAT("""
 SELECT 'eligible_skus' AS table_name, COUNT(*) AS row_count
@@ -532,10 +565,11 @@ FROM %s
 """, tbl_eligible_skus);
 
 -- ====================================================================================
--- STEP 1.5: BESTSELLERS (top-N globally by order count in last 365 days)
+-- STEP 1.4: BESTSELLERS (top-N globally by order count in last 365 days)
 -- ====================================================================================
--- Combines historical (import_orders) and recent (staged_signals.purchase_recent)
--- order counts, keeps only SKUs that pass eligibility.
+-- Combines historical (import_orders < recent_boundary) and recent (events, >= recent_boundary)
+-- order counts so the same order never double-contributes. Keeps only SKUs that pass
+-- eligibility.
 -- ====================================================================================
 SET step_start = CURRENT_TIMESTAMP();
 
@@ -545,7 +579,6 @@ CLUSTER BY sku AS
 WITH hist_365d AS (
   -- Historical sliver of last-365d window: trailing 365d AND strictly before recent_boundary.
   -- Non-overlapping with recent_365d (events post-recent_boundary).
-  -- Year prefilter avoids SAFE.PARSE_DATE on every row (matches v5.18 pattern).
   SELECT
     REGEXP_REPLACE(UPPER(TRIM(ITEM)), r'([0-9])[BRGP]$', r'\\1') AS sku,
     COUNT(*) AS order_count
@@ -595,113 +628,369 @@ USING top_n_bestsellers AS top_n_bestsellers,
       max_prefilter_year AS max_prefilter_year;
 
 SET step_end = CURRENT_TIMESTAMP();
-SELECT FORMAT('[Step 1.5] Bestsellers: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
+SELECT FORMAT('[Step 1.4] Bestsellers: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
 
 -- ====================================================================================
--- STEP 1.6: RAW SIGNAL AGES PER EMAIL (pre-filter; drives engagement_tier)
+-- STEP 2: PURCHASE HISTORY + LIFETIME PURCHASE EXCLUSION
 -- ====================================================================================
--- engagement_tier must reflect the user's actual behavior, not whatever survived the
--- filtering/ranking cascade. If the user's freshest cart was on a purchase-excluded
--- SKU, the cart signal disappears downstream — but we still want to tier them 'hot'
--- because we know the signal exists.
--- ====================================================================================
-SET step_start = CURRENT_TIMESTAMP();
-
-EXECUTE IMMEDIATE FORMAT("""
-CREATE OR REPLACE TABLE %s
-CLUSTER BY email_lower AS
-WITH event_ages AS (
-  SELECT
-    u.email_lower,
-    MIN(IF(s.signal_type = 'cart', DATE_DIFF(@signal_window_end, DATE(s.event_ts), DAY), NULL)) AS min_cart_age,
-    MIN(IF(s.signal_type = 'view', DATE_DIFF(@signal_window_end, DATE(s.event_ts), DAY), NULL)) AS min_view_age,
-    MIN(IF(s.signal_type = 'purchase_recent', DATE_DIFF(@signal_window_end, DATE(s.event_ts), DAY), NULL)) AS min_recent_purchase_age
-  FROM %s s
-  JOIN %s u ON s.user_id = u.user_id
-  GROUP BY u.email_lower
-),
-hist_ages AS (
-  SELECT
-    u.email_lower,
-    MIN(DATE_DIFF(@signal_window_end, h.order_date, DAY)) AS min_hist_purchase_age
-  FROM %s h
-  JOIN %s u ON h.user_id = u.user_id
-  GROUP BY u.email_lower
-)
-SELECT
-  COALESCE(ea.email_lower, ha.email_lower) AS email_lower,
-  ea.min_cart_age,
-  ea.min_view_age,
-  -- Freshest purchase = MIN across recent events and historical orders
-  CASE
-    WHEN ea.min_recent_purchase_age IS NULL AND ha.min_hist_purchase_age IS NULL THEN NULL
-    WHEN ea.min_recent_purchase_age IS NULL THEN ha.min_hist_purchase_age
-    WHEN ha.min_hist_purchase_age IS NULL THEN ea.min_recent_purchase_age
-    ELSE LEAST(ea.min_recent_purchase_age, ha.min_hist_purchase_age)
-  END AS min_purchase_age
-FROM event_ages ea
-FULL OUTER JOIN hist_ages ha ON ea.email_lower = ha.email_lower;
-""", tbl_raw_signal_ages, tbl_staged_signals, tbl_noymm_users, tbl_hist_purchases, tbl_noymm_users)
-USING signal_window_end AS signal_window_end;
-
-SET step_end = CURRENT_TIMESTAMP();
-SELECT FORMAT('[Step 1.6] Raw signal ages: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
-
--- ====================================================================================
--- STEP 2: PURCHASE EXCLUSION (last 365 days)
--- ====================================================================================
--- Reuses v5.18 pattern: union event-sourced + import-sourced purchases per user.
--- SKU is variant-normalized so RA003R matches purchased RA003B.
+-- Shared purchase-history source for:
+--   - lifetime exclusion
+--   - purchase seeds
+--   - co-purchase graph construction
+--
+-- Purchase history remains authoritative at the email level (import_orders joined on
+-- email_lower), then is expanded back onto the no-YMM user_ids under that email so the
+-- downstream ranking tables can stay user_id-aware like the current pipeline.
 -- ====================================================================================
 SET step_start = CURRENT_TIMESTAMP();
 
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY user_id, sku_norm AS
-WITH from_events AS (
-  SELECT DISTINCT
-    user_id,
-    REGEXP_REPLACE(sku, r'([0-9])[BRGP]$', r'\\1') AS sku_norm
+WITH noymm_emails AS (
+  SELECT DISTINCT email_lower
   FROM %s
-  WHERE signal_type = 'purchase_recent'
-    AND DATE(event_ts) BETWEEN DATE_SUB(@signal_window_end, INTERVAL @purchase_window_days DAY) AND @signal_window_end
-    AND user_id IS NOT NULL
-    AND sku IS NOT NULL
+),
+from_events AS (
+  SELECT DISTINCT
+    u.email_lower,
+    u.user_id,
+    REGEXP_REPLACE(s.sku, r'([0-9])[BRGP]$', r'\\1') AS sku_norm,
+    DATE(s.event_ts) AS purchase_date
+  FROM %s s
+  JOIN %s u ON s.user_id = u.user_id
+  WHERE s.signal_type = 'purchase_recent'
+    AND s.user_id IS NOT NULL
+    AND s.sku IS NOT NULL
 ),
 from_import AS (
   SELECT DISTINCT
-    user_id,
-    REGEXP_REPLACE(sku, r'([0-9])[BRGP]$', r'\\1') AS sku_norm
-  FROM %s
-  WHERE order_date BETWEEN DATE_SUB(@signal_window_end, INTERVAL @purchase_window_days DAY) AND @signal_window_end
+    e.email_lower,
+    u.user_id,
+    REGEXP_REPLACE(UPPER(TRIM(io.ITEM)), r'([0-9])[BRGP]$', r'\\1') AS sku_norm,
+    SAFE.PARSE_DATE('%%A, %%B %%d, %%Y', io.ORDER_DATE) AS purchase_date
+  FROM `auxia-gcp.data_company_1950.import_orders` io
+  JOIN noymm_emails e
+    ON LOWER(TRIM(io.SHIP_TO_EMAIL)) = e.email_lower
+  JOIN %s u
+    ON e.email_lower = u.email_lower
+  WHERE io.ITEM IS NOT NULL
+    AND io.SHIP_TO_EMAIL IS NOT NULL
+    AND NOT (
+      io.ITEM LIKE 'EXT-%%' OR
+      io.ITEM LIKE 'GIFT-%%' OR
+      io.ITEM LIKE 'WARRANTY-%%' OR
+      io.ITEM LIKE 'SERVICE-%%' OR
+      io.ITEM LIKE 'PREAUTH-%%'
+    )
+    AND SAFE_CAST(REGEXP_EXTRACT(io.ORDER_DATE, r'\\b(20[0-9]{2})\\b') AS INT64) BETWEEN @min_prefilter_year AND @max_prefilter_year
+    AND SAFE.PARSE_DATE('%%A, %%B %%d, %%Y', io.ORDER_DATE) IS NOT NULL
 )
-SELECT DISTINCT user_id, sku_norm
+SELECT DISTINCT
+  email_lower,
+  user_id,
+  sku_norm,
+  purchase_date
 FROM (
   SELECT * FROM from_events
   UNION DISTINCT
   SELECT * FROM from_import
-);
-""", tbl_purchase_excl, tbl_staged_signals, tbl_hist_purchases)
-USING signal_window_end AS signal_window_end, purchase_window_days AS purchase_window_days;
+)
+WHERE sku_norm IS NOT NULL
+  AND purchase_date IS NOT NULL;
+""", tbl_purchase_history, tbl_noymm_users, tbl_staged_signals, tbl_noymm_users, tbl_noymm_users)
+USING min_prefilter_year AS min_prefilter_year, max_prefilter_year AS max_prefilter_year;
 
 SET step_end = CURRENT_TIMESTAMP();
-SELECT FORMAT('[Step 2] Purchase exclusion: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
+SELECT FORMAT('[Step 2.0] Purchase history: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
+
+SET step_start = CURRENT_TIMESTAMP();
+
+EXECUTE IMMEDIATE FORMAT("""
+CREATE OR REPLACE TABLE %s
+CLUSTER BY user_id, sku_norm AS
+SELECT DISTINCT
+  user_id,
+  REGEXP_REPLACE(
+    REGEXP_REPLACE(sku_norm, r'([0-9])[BRGP]$', r'\\1'),
+    r'(-KIT|-BLK|-POL|-CHR|-RAW)$', ''
+  ) AS sku_norm
+FROM %s;
+""", tbl_purchase_excl, tbl_purchase_history);
+
+SET step_end = CURRENT_TIMESTAMP();
+SELECT FORMAT('[Step 2.1] Lifetime purchase exclusion: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
 
 -- ====================================================================================
--- STEP 3: SCORED CANDIDATES (unified recency-weighted scoring)
+-- STEP 3.0: FLOW-SAFETY CONTEXTS + CO-PURCHASE GRAPH
 -- ====================================================================================
--- Per (user, sku), aggregate the freshest event per signal_type, score each with
---   signal_score = weight × exp(-age_days / tau)
--- and sum across signal_types. Top contributing signal becomes the rec's type.
+SET step_start = CURRENT_TIMESTAMP();
+
+EXECUTE IMMEDIATE FORMAT("""
+CREATE OR REPLACE TABLE %s
+CLUSTER BY user_id, cart_sku_normalized AS
+WITH latest_cart AS (
+  SELECT user_id, MAX(event_ts) AS cart_snapshot_ts
+  FROM %s
+  WHERE signal_type = 'cart'
+  GROUP BY user_id
+)
+SELECT DISTINCT
+  u.email_lower,
+  s.user_id,
+  REGEXP_REPLACE(s.sku, r'([0-9])[BRGP]$', r'\\1') AS cart_sku_normalized,
+  lc.cart_snapshot_ts
+FROM latest_cart lc
+JOIN %s s
+  ON s.user_id = lc.user_id
+ AND s.event_ts = lc.cart_snapshot_ts
+ AND s.signal_type = 'cart'
+JOIN %s u ON s.user_id = u.user_id
+WHERE s.sku IS NOT NULL;
+""", tbl_active_cart, tbl_staged_signals, tbl_staged_signals, tbl_noymm_users);
+
+EXECUTE IMMEDIATE FORMAT("""
+CREATE OR REPLACE TABLE %s
+CLUSTER BY user_id, browse_sku_normalized AS
+SELECT
+  u.email_lower,
+  s.user_id,
+  REGEXP_REPLACE(s.sku, r'([0-9])[BRGP]$', r'\\1') AS browse_sku_normalized,
+  MAX(s.event_ts) AS last_view_ts
+FROM %s s
+JOIN %s u ON s.user_id = u.user_id
+WHERE s.signal_type = 'view'
+  AND s.sku IS NOT NULL
+  AND DATE_DIFF(@signal_window_end, DATE(s.event_ts), DAY) <= @browse_recovery_lookback_days
+GROUP BY u.email_lower, s.user_id, browse_sku_normalized;
+""", tbl_recent_browse, tbl_staged_signals, tbl_noymm_users)
+USING signal_window_end AS signal_window_end,
+      browse_recovery_lookback_days AS browse_recovery_lookback_days;
+
+EXECUTE IMMEDIATE FORMAT("""
+CREATE OR REPLACE TABLE %s
+CLUSTER BY seed_sku, related_sku AS
+WITH eligible_purchase_history AS (
+  SELECT DISTINCT
+    email_lower,
+    sku_norm
+  FROM %s ph
+  JOIN %s e
+    ON ph.sku_norm = e.sku
+),
+buyer_counts AS (
+  SELECT
+    sku_norm,
+    COUNT(DISTINCT email_lower) AS buyer_count
+  FROM eligible_purchase_history
+  GROUP BY sku_norm
+),
+pair_counts AS (
+  SELECT
+    a.sku_norm AS seed_sku,
+    b.sku_norm AS related_sku,
+    COUNT(DISTINCT a.email_lower) AS co_order_count
+  FROM eligible_purchase_history a
+  JOIN eligible_purchase_history b
+    ON a.email_lower = b.email_lower
+   AND a.sku_norm != b.sku_norm
+  GROUP BY a.sku_norm, b.sku_norm
+)
+SELECT
+  pc.seed_sku,
+  pc.related_sku,
+  pc.co_order_count,
+  sb.buyer_count AS seed_buyer_count,
+  rb.buyer_count AS related_buyer_count,
+  ROUND(SAFE_DIVIDE(pc.co_order_count, sb.buyer_count) * LOG(1 + pc.co_order_count), 6) AS co_score
+FROM pair_counts pc
+JOIN buyer_counts sb ON pc.seed_sku = sb.sku_norm
+JOIN buyer_counts rb ON pc.related_sku = rb.sku_norm
+WHERE pc.co_order_count >= @min_co_purchase_support
+  AND sb.buyer_count >= @min_seed_buyer_count;
+""", tbl_co_purchase_graph, tbl_purchase_history, tbl_eligible_skus)
+USING min_co_purchase_support AS min_co_purchase_support,
+      min_seed_buyer_count AS min_seed_buyer_count;
+
+SET step_end = CURRENT_TIMESTAMP();
+SELECT FORMAT('[Step 3.0] Contexts + co-purchase graph: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
+
+-- ====================================================================================
+-- STEP 3.1: SEED EXTRACTION + RELATED CANDIDATE EXPANSION
+-- ====================================================================================
+SET step_start = CURRENT_TIMESTAMP();
+
+EXECUTE IMMEDIATE FORMAT("""
+CREATE OR REPLACE TABLE %s
+CLUSTER BY user_id, seed_sku AS
+WITH purchase_seeds AS (
+  SELECT
+    email_lower,
+    user_id,
+    sku_norm AS seed_sku,
+    'purchase' AS seed_source,
+    MIN(DATE_DIFF(@signal_window_end, purchase_date, DAY)) AS age_days
+  FROM %s
+  GROUP BY email_lower, user_id, sku_norm
+),
+cart_seeds AS (
+  SELECT
+    email_lower,
+    user_id,
+    cart_sku_normalized AS seed_sku,
+    'cart' AS seed_source,
+    DATE_DIFF(@signal_window_end, DATE(cart_snapshot_ts), DAY) AS age_days
+  FROM %s
+),
+view_seeds AS (
+  SELECT
+    u.email_lower,
+    s.user_id,
+    REGEXP_REPLACE(s.sku, r'([0-9])[BRGP]$', r'\\1') AS seed_sku,
+    'view' AS seed_source,
+    MIN(DATE_DIFF(@signal_window_end, DATE(s.event_ts), DAY)) AS age_days
+  FROM %s s
+  JOIN %s u ON s.user_id = u.user_id
+  WHERE s.signal_type = 'view'
+    AND s.sku IS NOT NULL
+  GROUP BY u.email_lower, s.user_id, seed_sku
+),
+all_seeds AS (
+  SELECT * FROM purchase_seeds
+  UNION ALL
+  SELECT * FROM cart_seeds
+  UNION ALL
+  SELECT * FROM view_seeds
+)
+SELECT
+  email_lower,
+  user_id,
+  seed_sku,
+  seed_source,
+  ROUND(
+    CASE seed_source
+      WHEN 'purchase' THEN @w_purchase_seed * EXP(-age_days / @tau_purchase_seed)
+      WHEN 'cart'     THEN @w_cart_seed * EXP(-age_days / @tau_cart_seed)
+      WHEN 'view'     THEN @w_view_seed * EXP(-age_days / @tau_view_seed)
+      ELSE 0.0
+    END,
+    6
+  ) AS seed_weight
+FROM all_seeds
+WHERE seed_sku IS NOT NULL;
+""", tbl_seed_skus, tbl_purchase_history, tbl_active_cart, tbl_staged_signals, tbl_noymm_users)
+USING signal_window_end AS signal_window_end,
+      w_purchase_seed AS w_purchase_seed,
+      w_cart_seed AS w_cart_seed,
+      w_view_seed AS w_view_seed,
+      tau_purchase_seed AS tau_purchase_seed,
+      tau_cart_seed AS tau_cart_seed,
+      tau_view_seed AS tau_view_seed;
+
+EXECUTE IMMEDIATE FORMAT("""
+CREATE OR REPLACE TABLE %s
+CLUSTER BY user_id, candidate_sku AS
+SELECT
+  s.email_lower,
+  s.user_id,
+  g.related_sku AS candidate_sku,
+  e.part_type,
+  e.price,
+  e.image_url,
+  ROUND(MAX(s.seed_weight * g.co_score), 6) AS candidate_score
+FROM %s s
+JOIN %s g
+  ON s.seed_sku = g.seed_sku
+JOIN %s e
+  ON g.related_sku = e.sku
+GROUP BY
+  s.email_lower,
+  s.user_id,
+  g.related_sku,
+  e.part_type,
+  e.price,
+  e.image_url;
+""", tbl_related_pool, tbl_seed_skus, tbl_co_purchase_graph, tbl_eligible_skus);
+
+EXECUTE IMMEDIATE FORMAT("""
+CREATE OR REPLACE TABLE %s
+CLUSTER BY user_id AS
+WITH filtered AS (
+  SELECT
+    rp.email_lower,
+    rp.user_id,
+    rp.candidate_sku AS sku,
+    rp.part_type,
+    rp.price,
+    rp.image_url,
+    ROUND(rp.candidate_score, 4) AS final_score,
+    REGEXP_REPLACE(
+      REGEXP_REPLACE(rp.candidate_sku, r'(-KIT|-BLK|-POL|-CHR|-RAW)$', ''),
+      r'([0-9])[BRGP]$', r'\\1'
+    ) AS base_sku
+  FROM %s rp
+  LEFT JOIN %s pe
+    ON rp.user_id = pe.user_id
+   AND REGEXP_REPLACE(
+         REGEXP_REPLACE(rp.candidate_sku, r'([0-9])[BRGP]$', r'\\1'),
+         r'(-KIT|-BLK|-POL|-CHR|-RAW)$', ''
+       ) = pe.sku_norm
+  LEFT JOIN %s ac
+    ON rp.user_id = ac.user_id
+   AND REGEXP_REPLACE(rp.candidate_sku, r'([0-9])[BRGP]$', r'\\1') = ac.cart_sku_normalized
+  LEFT JOIN %s rb
+    ON rp.user_id = rb.user_id
+   AND REGEXP_REPLACE(rp.candidate_sku, r'([0-9])[BRGP]$', r'\\1') = rb.browse_sku_normalized
+  WHERE pe.user_id IS NULL
+    AND ac.user_id IS NULL
+    AND rb.user_id IS NULL
+),
+deduped AS (
+  SELECT * EXCEPT(rn_base)
+  FROM (
+    SELECT
+      f.*,
+      ROW_NUMBER() OVER (PARTITION BY user_id, base_sku ORDER BY final_score DESC, sku) AS rn_base
+    FROM filtered f
+  )
+  WHERE rn_base = 1
+)
+SELECT email_lower, user_id, sku, part_type, price, image_url, final_score
+FROM deduped;
+""", tbl_related_filtered, tbl_related_pool, tbl_purchase_excl, tbl_active_cart, tbl_recent_browse);
+
+EXECUTE IMMEDIATE FORMAT("""
+CREATE OR REPLACE TABLE %s
+CLUSTER BY user_id AS
+SELECT
+  email_lower,
+  user_id,
+  sku,
+  part_type,
+  price,
+  image_url,
+  ROUND(final_score + @related_score_offset, 4) AS final_score,
+  1 AS source_tier,
+  'related' AS source_family,
+  ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY final_score DESC, sku) AS source_rank
+FROM %s
+QUALIFY source_rank <= @required_recs * 3;
+""", tbl_related_ranked, tbl_related_filtered)
+USING related_score_offset AS related_score_offset,
+      required_recs AS required_recs;
+
+SET step_end = CURRENT_TIMESTAMP();
+SELECT FORMAT('[Step 3.1] Seed extraction + related expansion: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
+
+-- ====================================================================================
+-- STEP 3.2: BACKUP FLOOR PATH (current exact-SKU engine, flow-safe filtered)
 -- ====================================================================================
 SET step_start = CURRENT_TIMESTAMP();
 
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY user_id, sku AS
-WITH
--- User-signal tuples from events (view, cart, purchase_recent)
-event_signals AS (
+WITH event_signals AS (
   SELECT
     s.user_id,
     s.sku,
@@ -709,18 +998,8 @@ event_signals AS (
     DATE_DIFF(@signal_window_end, DATE(s.event_ts), DAY) AS age_days
   FROM %s s
   JOIN %s u ON s.user_id = u.user_id
-  WHERE s.signal_type IN ('view', 'cart', 'purchase_recent')
+  WHERE s.signal_type IN ('view', 'cart')
 ),
--- User-signal tuples from import_orders (purchase_historical)
-hist_signals AS (
-  SELECT
-    h.user_id,
-    h.sku,
-    'purchase_historical' AS signal_type,
-    DATE_DIFF(@signal_window_end, h.order_date, DAY) AS age_days
-  FROM %s h
-),
--- Bestseller candidates: cross join every no-YMM user with top bestsellers
 bestseller_signals AS (
   SELECT
     u.user_id,
@@ -730,48 +1009,29 @@ bestseller_signals AS (
   FROM %s u
   CROSS JOIN %s b
 ),
--- Union all signal sources
 all_signals AS (
   SELECT * FROM event_signals
   UNION ALL
-  SELECT * FROM hist_signals
-  UNION ALL
   SELECT * FROM bestseller_signals
 ),
--- Take freshest event per (user, sku, signal_type)
 per_signal_freshest AS (
   SELECT user_id, sku, signal_type, MIN(age_days) AS age_days
   FROM all_signals
   GROUP BY user_id, sku, signal_type
 ),
--- Score each (user, sku, signal) with weight × exp(-age/tau)
 per_signal_scored AS (
   SELECT
     user_id,
     sku,
     signal_type,
-    age_days,
     CASE signal_type
-      WHEN 'cart' THEN @w_cart * EXP(-age_days / @tau_cart)
-      WHEN 'view' THEN @w_view * EXP(-age_days / @tau_view)
-      WHEN 'purchase_recent' THEN @w_purchase_recent * EXP(-age_days / @tau_purchase_recent)
-      WHEN 'purchase_historical' THEN @w_purchase_historical * EXP(-age_days / @tau_purchase_historical)
+      WHEN 'cart'       THEN @w_cart * EXP(-age_days / @tau_cart)
+      WHEN 'view'       THEN @w_view * EXP(-age_days / @tau_view)
       WHEN 'bestseller' THEN @w_bestseller
       ELSE 0.0
     END AS signal_score
   FROM per_signal_freshest
 ),
--- Top contributing signal per (user, sku) — becomes rec_type
-top_signal_per_pair AS (
-  SELECT user_id, sku, signal_type AS top_signal, age_days AS top_signal_age_days
-  FROM (
-    SELECT *,
-      ROW_NUMBER() OVER (PARTITION BY user_id, sku ORDER BY signal_score DESC, signal_type) AS rn
-    FROM per_signal_scored
-  )
-  WHERE rn = 1
-),
--- Summed score per (user, sku)
 total_score AS (
   SELECT user_id, sku, SUM(signal_score) AS final_score
   FROM per_signal_scored
@@ -784,106 +1044,100 @@ SELECT
   e.part_type,
   e.price,
   e.image_url,
-  ts.top_signal AS rec_type,
-  ts.top_signal_age_days AS signal_age_days,
   ROUND(t.final_score, 4) AS final_score
 FROM total_score t
-JOIN top_signal_per_pair ts USING (user_id, sku)
 JOIN %s u ON t.user_id = u.user_id
-JOIN %s e ON t.sku = e.sku
--- Purchase exclusion: normalize variants for match
-LEFT JOIN %s pe
-  ON t.user_id = pe.user_id
- AND REGEXP_REPLACE(t.sku, r'([0-9])[BRGP]$', r'\\1') = pe.sku_norm
-WHERE pe.user_id IS NULL;
-""", tbl_scored, tbl_staged_signals, tbl_noymm_users, tbl_hist_purchases,
-     tbl_noymm_users, tbl_bestsellers, tbl_noymm_users, tbl_eligible_skus, tbl_purchase_excl)
+JOIN %s e ON t.sku = e.sku;
+""", tbl_floor_scored, tbl_staged_signals, tbl_noymm_users, tbl_noymm_users, tbl_bestsellers, tbl_noymm_users, tbl_eligible_skus)
 USING signal_window_end AS signal_window_end,
-      w_cart AS w_cart, w_view AS w_view, w_purchase_recent AS w_purchase_recent,
-      w_purchase_historical AS w_purchase_historical, w_bestseller AS w_bestseller,
-      tau_cart AS tau_cart, tau_view AS tau_view,
-      tau_purchase_recent AS tau_purchase_recent, tau_purchase_historical AS tau_purchase_historical;
-
-SET step_end = CURRENT_TIMESTAMP();
-SELECT FORMAT('[Step 3] Scored candidates: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
-
-EXECUTE IMMEDIATE FORMAT("""
-SELECT 'scored_candidates' AS table_name,
-  COUNT(*) AS row_count,
-  COUNT(DISTINCT user_id) AS unique_users,
-  COUNT(DISTINCT sku) AS unique_skus
-FROM %s
-""", tbl_scored);
-
--- ====================================================================================
--- STEP 3.1: VARIANT DEDUP + DIVERSITY CAP
--- ====================================================================================
-SET step_start = CURRENT_TIMESTAMP();
+      w_cart AS w_cart,
+      w_view AS w_view,
+      w_bestseller AS w_bestseller,
+      tau_cart AS tau_cart,
+      tau_view AS tau_view;
 
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY user_id AS
-WITH normalized AS (
-  SELECT s.*,
-         REGEXP_REPLACE(
-           REGEXP_REPLACE(s.sku, r'(-KIT|-BLK|-POL|-CHR|-RAW|-[A-Z0-9]{1,2})$', ''),
-           r'([0-9])[BRGP]$', r'\\1'
-         ) AS base_sku
-  FROM %s s
+WITH filtered AS (
+  SELECT
+    fs.email_lower,
+    fs.user_id,
+    fs.sku,
+    fs.part_type,
+    fs.price,
+    fs.image_url,
+    fs.final_score,
+    REGEXP_REPLACE(
+      REGEXP_REPLACE(fs.sku, r'(-KIT|-BLK|-POL|-CHR|-RAW)$', ''),
+      r'([0-9])[BRGP]$', r'\\1'
+    ) AS base_sku
+  FROM %s fs
+  LEFT JOIN %s pe
+    ON fs.user_id = pe.user_id
+   AND REGEXP_REPLACE(
+         REGEXP_REPLACE(fs.sku, r'([0-9])[BRGP]$', r'\\1'),
+         r'(-KIT|-BLK|-POL|-CHR|-RAW)$', ''
+       ) = pe.sku_norm
+  LEFT JOIN %s ac
+    ON fs.user_id = ac.user_id
+   AND REGEXP_REPLACE(fs.sku, r'([0-9])[BRGP]$', r'\\1') = ac.cart_sku_normalized
+  LEFT JOIN %s rb
+    ON fs.user_id = rb.user_id
+   AND REGEXP_REPLACE(fs.sku, r'([0-9])[BRGP]$', r'\\1') = rb.browse_sku_normalized
+  WHERE pe.user_id IS NULL
+    AND ac.user_id IS NULL
+    AND rb.user_id IS NULL
 ),
-dedup_variant AS (
-  SELECT * EXCEPT(rn_var)
+deduped AS (
+  SELECT * EXCEPT(rn_base)
   FROM (
-    SELECT n.*, ROW_NUMBER() OVER (PARTITION BY user_id, base_sku ORDER BY final_score DESC, sku) AS rn_var
-    FROM normalized n
+    SELECT
+      f.*,
+      ROW_NUMBER() OVER (PARTITION BY user_id, base_sku ORDER BY final_score DESC, sku) AS rn_base
+    FROM filtered f
   )
-  WHERE rn_var = 1
-),
-diversified AS (
-  SELECT dv.*,
-         ROW_NUMBER() OVER (PARTITION BY user_id, part_type ORDER BY final_score DESC, sku) AS rn_parttype
-  FROM dedup_variant dv
+  WHERE rn_base = 1
 )
-SELECT *
-FROM diversified
-WHERE rn_parttype <= @max_parttype_per_user;
-""", tbl_diversity, tbl_scored)
-USING max_parttype_per_user AS max_parttype_per_user;
+SELECT email_lower, user_id, sku, part_type, price, image_url, final_score
+FROM deduped;
+""", tbl_floor_filtered, tbl_floor_scored, tbl_purchase_excl, tbl_active_cart, tbl_recent_browse);
 
--- ====================================================================================
--- STEP 3.2: TOP-N SELECTION (top 4 per user) + FALLBACK REFILL
--- ====================================================================================
--- Two passes UNION'd into a single output:
---   Primary: top-4 per user from diversity-filtered scored candidates.
---   Fallback: for users missing from Primary (0 surviving candidates), emit top
---             bestsellers minus purchase-excluded. Guarantees the spec's promise
---             that fallback (engagement_tier) users still receive recs.
--- ====================================================================================
 EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY user_id AS
 WITH primary_ranked AS (
   SELECT
-    d.email_lower, d.user_id, d.sku, d.part_type, d.price, d.image_url,
-    d.rec_type, d.signal_age_days, d.final_score,
-    ROW_NUMBER() OVER (PARTITION BY d.user_id ORDER BY d.final_score DESC, d.sku) AS rn,
-    COUNT(*) OVER (PARTITION BY d.user_id) AS user_rec_count
-  FROM %s d
+    f.email_lower,
+    f.user_id,
+    f.sku,
+    f.part_type,
+    f.price,
+    f.image_url,
+    f.final_score,
+    ROW_NUMBER() OVER (PARTITION BY f.user_id ORDER BY f.final_score DESC, f.sku) AS rn
+  FROM %s f
 ),
 primary_selected AS (
-  SELECT email_lower, user_id, sku, part_type, price, image_url, rec_type, signal_age_days, final_score, rn
+  SELECT
+    email_lower,
+    user_id,
+    sku,
+    part_type,
+    price,
+    image_url,
+    final_score
   FROM primary_ranked
-  WHERE user_rec_count >= @min_required_recs
-    AND rn <= @required_recs
+  WHERE rn <= @required_recs * 3
 ),
-primary_emails AS (
-  SELECT DISTINCT email_lower FROM primary_selected
+covered_users AS (
+  SELECT DISTINCT user_id FROM primary_selected
 ),
 missing_users AS (
   SELECT u.user_id, u.email_lower
   FROM %s u
-  LEFT JOIN primary_emails pe ON u.email_lower = pe.email_lower
-  WHERE pe.email_lower IS NULL
+  LEFT JOIN covered_users cu ON u.user_id = cu.user_id
+  WHERE cu.user_id IS NULL
 ),
 fallback_pool AS (
   SELECT
@@ -893,44 +1147,164 @@ fallback_pool AS (
     e.part_type,
     e.price,
     e.image_url,
-    'bestseller' AS rec_type,
-    CAST(NULL AS INT64) AS signal_age_days,
     @w_bestseller AS final_score,
     b.bestseller_rank
   FROM missing_users mu
   CROSS JOIN %s b
   JOIN %s e ON b.sku = e.sku
-  LEFT JOIN %s px
-    ON mu.user_id = px.user_id
-   AND REGEXP_REPLACE(b.sku, r'([0-9])[BRGP]$', r'\\1') = px.sku_norm
-  WHERE px.user_id IS NULL
+  LEFT JOIN %s pe
+    ON mu.user_id = pe.user_id
+   AND REGEXP_REPLACE(b.sku, r'([0-9])[BRGP]$', r'\\1') = pe.sku_norm
+  LEFT JOIN %s ac
+    ON mu.user_id = ac.user_id
+   AND REGEXP_REPLACE(b.sku, r'([0-9])[BRGP]$', r'\\1') = ac.cart_sku_normalized
+  LEFT JOIN %s rb
+    ON mu.user_id = rb.user_id
+   AND REGEXP_REPLACE(b.sku, r'([0-9])[BRGP]$', r'\\1') = rb.browse_sku_normalized
+  WHERE pe.user_id IS NULL
+    AND ac.user_id IS NULL
+    AND rb.user_id IS NULL
 ),
 fallback_selected AS (
-  SELECT email_lower, user_id, sku, part_type, price, image_url, rec_type, signal_age_days, final_score, rn
+  SELECT
+    email_lower,
+    user_id,
+    sku,
+    part_type,
+    price,
+    image_url,
+    final_score
   FROM (
-    SELECT fp.*,
-           ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY bestseller_rank, sku) AS rn
+    SELECT
+      fp.*,
+      ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY bestseller_rank, sku) AS rn
     FROM fallback_pool fp
   )
-  WHERE rn <= @required_recs
+  WHERE rn <= @required_recs * 3
 )
-SELECT * FROM primary_selected
+SELECT
+  email_lower,
+  user_id,
+  sku,
+  part_type,
+  price,
+  image_url,
+  final_score,
+  2 AS source_tier,
+  'floor' AS source_family
+FROM primary_selected
 UNION ALL
-SELECT * FROM fallback_selected;
-""", tbl_ranked, tbl_diversity, tbl_noymm_users, tbl_bestsellers, tbl_eligible_skus, tbl_purchase_excl)
+SELECT
+  email_lower,
+  user_id,
+  sku,
+  part_type,
+  price,
+  image_url,
+  final_score,
+  2 AS source_tier,
+  'floor' AS source_family
+FROM fallback_selected;
+""", tbl_floor_ranked, tbl_floor_filtered, tbl_noymm_users, tbl_bestsellers, tbl_eligible_skus, tbl_purchase_excl, tbl_active_cart, tbl_recent_browse)
 USING required_recs AS required_recs,
-      min_required_recs AS min_required_recs,
       w_bestseller AS w_bestseller;
 
 SET step_end = CURRENT_TIMESTAMP();
-SELECT FORMAT('[Step 3.2] Ranked recommendations (with fallback): %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
+SELECT FORMAT('[Step 3.2] Backup floor path: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
 
 -- ====================================================================================
--- STEP 3.3: PIVOT TO WIDE FORMAT (+ dominant_signal, engagement_tier)
+-- STEP 3.3: MERGE RELATED PRIMARY + FLOOR BACKFILL
 -- ====================================================================================
--- Per email_lower: emit up to 4 rec slots. rec_type is per-slot signal type.
--- dominant_signal = rec_type of slot 1 (highest-scoring signal for the user).
--- engagement_tier derived from the freshest/strongest user signal present.
+SET step_start = CURRENT_TIMESTAMP();
+
+EXECUTE IMMEDIATE FORMAT("""
+CREATE OR REPLACE TABLE %s
+CLUSTER BY user_id AS
+WITH combined AS (
+  SELECT email_lower, user_id, sku, part_type, price, image_url, final_score, source_tier
+  FROM %s
+  UNION ALL
+  SELECT email_lower, user_id, sku, part_type, price, image_url, final_score, source_tier
+  FROM %s
+),
+normalized AS (
+  SELECT
+    c.*,
+    REGEXP_REPLACE(
+      REGEXP_REPLACE(c.sku, r'(-KIT|-BLK|-POL|-CHR|-RAW)$', ''),
+      r'([0-9])[BRGP]$', r'\\1'
+    ) AS base_sku
+  FROM combined c
+),
+deduped AS (
+  SELECT * EXCEPT(rn_base)
+  FROM (
+    SELECT
+      n.*,
+      ROW_NUMBER() OVER (
+        PARTITION BY user_id, base_sku
+        ORDER BY source_tier ASC, final_score DESC, sku
+      ) AS rn_base
+    FROM normalized n
+  )
+  WHERE rn_base = 1
+),
+diversified AS (
+  SELECT
+    d.*,
+    ROW_NUMBER() OVER (
+      PARTITION BY user_id, part_type
+      ORDER BY source_tier ASC, final_score DESC, sku
+    ) AS rn_parttype
+  FROM deduped d
+),
+ranked AS (
+  SELECT
+    email_lower,
+    user_id,
+    sku,
+    part_type,
+    price,
+    image_url,
+    final_score,
+    ROW_NUMBER() OVER (
+      PARTITION BY user_id
+      ORDER BY source_tier ASC, final_score DESC, sku
+    ) AS rn,
+    COUNT(*) OVER (PARTITION BY user_id) AS user_rec_count
+  FROM diversified
+  WHERE rn_parttype <= @max_parttype_per_user
+)
+SELECT
+  email_lower,
+  user_id,
+  sku,
+  part_type,
+  price,
+  image_url,
+  final_score,
+  rn
+FROM ranked
+WHERE user_rec_count >= @min_required_recs
+  AND rn <= @required_recs;
+""", tbl_ranked, tbl_related_ranked, tbl_floor_ranked)
+USING max_parttype_per_user AS max_parttype_per_user,
+      min_required_recs AS min_required_recs,
+      required_recs AS required_recs;
+
+SET step_end = CURRENT_TIMESTAMP();
+SELECT FORMAT('[Step 3.3] Merged ranking: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
+
+-- ====================================================================================
+-- STEP 3.4: PIVOT NON-FITMENT INTO V5.18 SHARED SCHEMA
+-- ====================================================================================
+-- Output schema MUST match V5.18 column-for-column. Non-fitment-specific literals:
+--   v1_year  = v1_make = v1_model = 'UNKNOWN'     (locked contract #5)
+--   rec*_type                                = 'non_fitment'    (locked contract #3)
+--   rec*_pop_source                          = NULL             (V5.18-only field)
+--   engagement_tier                          = NULL             (V5.18-only field)
+--   fitment_count                            = NULL             (V5.18-only field)
+--   generated_at, pipeline_version           — placeholders; overwritten at UNION (Step 3.6)
 -- ====================================================================================
 SET step_start = CURRENT_TIMESTAMP();
 
@@ -938,22 +1312,32 @@ EXECUTE IMMEDIATE FORMAT("""
 CREATE OR REPLACE TABLE %s
 CLUSTER BY email_lower AS
 WITH
--- Choose one user_id per email_lower when the same email has multiple user_ids
+-- Choose one user_id per email_lower when the same email has multiple user_ids.
+-- user_id-level aggregates (rec_count, total_score) are materialized in a dedicated
+-- CTE so the ROW_NUMBER's ORDER BY can reference them as plain columns — BigQuery
+-- forbids analytic functions inside another window's ORDER BY.
+user_agg AS (
+  SELECT
+    email_lower,
+    user_id,
+    SUM(final_score) AS user_total_score,
+    COUNT(*) AS user_rec_count
+  FROM %s
+  GROUP BY email_lower, user_id
+),
 selected_user AS (
   SELECT email_lower, user_id
   FROM (
     SELECT
       email_lower, user_id,
-      SUM(final_score) OVER (PARTITION BY email_lower, user_id) AS user_total_score,
-      COUNT(*) OVER (PARTITION BY email_lower, user_id) AS user_rec_count,
       ROW_NUMBER() OVER (
         PARTITION BY email_lower
         ORDER BY
-          COUNT(*) OVER (PARTITION BY email_lower, user_id) DESC,
-          SUM(final_score) OVER (PARTITION BY email_lower, user_id) DESC,
+          user_rec_count DESC,
+          user_total_score DESC,
           user_id
       ) AS pick_rn
-    FROM %s
+    FROM user_agg
   )
   WHERE pick_rn = 1
 ),
@@ -963,117 +1347,166 @@ ranked_selected AS (
   JOIN selected_user su
     ON r.email_lower = su.email_lower
    AND r.user_id = su.user_id
-),
--- For engagement_tier: freshest cart/view/purchase age per user, sourced from RAW
--- signal history (pre-filter) — a cart on a purchase-excluded SKU still marks the
--- user as 'hot' even though it doesn't appear in their output slots.
-user_sig_agg AS (
-  SELECT
-    email_lower,
-    min_cart_age,
-    min_view_age,
-    min_purchase_age,
-    CASE
-      WHEN min_cart_age IS NOT NULL OR min_view_age IS NOT NULL OR min_purchase_age IS NOT NULL
-        THEN 1 ELSE 0
-    END AS has_user_signal
-  FROM %s
 )
 SELECT
   r.email_lower,
+  CAST('UNKNOWN' AS STRING) AS v1_year,
+  CAST('UNKNOWN' AS STRING) AS v1_make,
+  CAST('UNKNOWN' AS STRING) AS v1_model,
   MAX(CASE WHEN rn = 1 THEN sku END) AS rec_part_1,
   MAX(CASE WHEN rn = 1 THEN price END) AS rec1_price,
   MAX(CASE WHEN rn = 1 THEN final_score END) AS rec1_score,
   MAX(CASE WHEN rn = 1 THEN image_url END) AS rec1_image,
-  MAX(CASE WHEN rn = 1 THEN rec_type END) AS rec1_type,
-  MAX(CASE WHEN rn = 1 THEN signal_age_days END) AS rec1_signal_age_days,
+  -- rec*_type is gated on the slot being populated so null-slot rows don't violate
+  -- the slot_consistency invariant (rec_part_N IS NULL ⇒ recN_* all NULL).
+  MAX(CASE WHEN rn = 1 THEN CAST('non_fitment' AS STRING) END) AS rec1_type,
+  CAST(NULL AS STRING) AS rec1_pop_source,
   MAX(CASE WHEN rn = 2 THEN sku END) AS rec_part_2,
   MAX(CASE WHEN rn = 2 THEN price END) AS rec2_price,
   MAX(CASE WHEN rn = 2 THEN final_score END) AS rec2_score,
   MAX(CASE WHEN rn = 2 THEN image_url END) AS rec2_image,
-  MAX(CASE WHEN rn = 2 THEN rec_type END) AS rec2_type,
-  MAX(CASE WHEN rn = 2 THEN signal_age_days END) AS rec2_signal_age_days,
+  MAX(CASE WHEN rn = 2 THEN CAST('non_fitment' AS STRING) END) AS rec2_type,
+  CAST(NULL AS STRING) AS rec2_pop_source,
   MAX(CASE WHEN rn = 3 THEN sku END) AS rec_part_3,
   MAX(CASE WHEN rn = 3 THEN price END) AS rec3_price,
   MAX(CASE WHEN rn = 3 THEN final_score END) AS rec3_score,
   MAX(CASE WHEN rn = 3 THEN image_url END) AS rec3_image,
-  MAX(CASE WHEN rn = 3 THEN rec_type END) AS rec3_type,
-  MAX(CASE WHEN rn = 3 THEN signal_age_days END) AS rec3_signal_age_days,
+  MAX(CASE WHEN rn = 3 THEN CAST('non_fitment' AS STRING) END) AS rec3_type,
+  CAST(NULL AS STRING) AS rec3_pop_source,
   MAX(CASE WHEN rn = 4 THEN sku END) AS rec_part_4,
   MAX(CASE WHEN rn = 4 THEN price END) AS rec4_price,
   MAX(CASE WHEN rn = 4 THEN final_score END) AS rec4_score,
   MAX(CASE WHEN rn = 4 THEN image_url END) AS rec4_image,
-  MAX(CASE WHEN rn = 4 THEN rec_type END) AS rec4_type,
-  MAX(CASE WHEN rn = 4 THEN signal_age_days END) AS rec4_signal_age_days,
-  COUNT(*) AS rec_count,
-  -- dominant_signal = rec_type of the top slot (highest-scoring signal)
-  MAX(CASE WHEN rn = 1 THEN rec_type END) AS dominant_signal,
-  -- engagement_tier:
-  --   hot     = cart OR view in last 7 days
-  --   warm    = view/purchase in last 30 days (not hot)
-  --   cold    = purchase-only signal
-  --   fallback = only bestseller (no user signal)
-  CASE
-    WHEN agg.has_user_signal = 0 THEN 'fallback'
-    WHEN LEAST(COALESCE(agg.min_cart_age, 999), COALESCE(agg.min_view_age, 999)) <= 7 THEN 'hot'
-    WHEN LEAST(COALESCE(agg.min_view_age, 999), COALESCE(agg.min_purchase_age, 999)) <= 30 THEN 'warm'
-    WHEN agg.min_purchase_age IS NOT NULL THEN 'cold'
-    ELSE 'fallback'
-  END AS engagement_tier,
+  MAX(CASE WHEN rn = 4 THEN CAST('non_fitment' AS STRING) END) AS rec4_type,
+  CAST(NULL AS STRING) AS rec4_pop_source,
+  CAST(NULL AS STRING) AS engagement_tier,
+  CAST(NULL AS INT64) AS fitment_count,
+  -- generated_at / pipeline_version are re-stamped at UNION time (Step 3.6)
   CURRENT_TIMESTAMP() AS generated_at,
   @pipeline_version AS pipeline_version
 FROM ranked_selected r
-JOIN user_sig_agg agg USING (email_lower)
-GROUP BY r.email_lower, agg.has_user_signal, agg.min_cart_age, agg.min_view_age, agg.min_purchase_age
+GROUP BY r.email_lower
 HAVING COUNT(*) >= @min_required_recs;
-""", tbl_final, tbl_ranked, tbl_ranked, tbl_raw_signal_ages)
+""", tbl_final_nf, tbl_ranked, tbl_ranked)
 USING pipeline_version AS pipeline_version, min_required_recs AS min_required_recs;
 
 SET step_end = CURRENT_TIMESTAMP();
-SELECT FORMAT('[Step 3.3] Final pivot: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
+SELECT FORMAT('[Step 3.4] Non-fitment pivot: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
 
 -- ====================================================================================
--- VALIDATION: Final Output Checks
+-- STEP 3.5: FITMENT SNAPSHOT REUSE
+-- ====================================================================================
+-- The snapshot was materialized once before Step 0 so Step 0a and the final UNION read the
+-- same fitment slice. Recheck row count here only as a guard before unioning.
+-- ====================================================================================
+SET step_start = CURRENT_TIMESTAMP();
+
+EXECUTE IMMEDIATE FORMAT("""
+SELECT COUNT(*) FROM %s
+""", tbl_fitment_snapshot) INTO v5_18_row_count;
+
+IF v5_18_row_count = 0 THEN
+  RAISE USING MESSAGE = 'V5.18 fitment snapshot is empty — snapshot pre-step failed';
+END IF;
+
+SET step_end = CURRENT_TIMESTAMP();
+SELECT FORMAT('[Step 3.5] Fitment snapshot reuse (%d rows): %d seconds',
+  v5_18_row_count,
+  TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
+
+-- ====================================================================================
+-- STEP 3.6: UNION ALL → SHARED FINAL TABLE
+-- ====================================================================================
+-- Locked contract #10: both row types are stamped with a FRESH shared-table run timestamp
+-- at UNION time. Fitment rows do NOT preserve their original V5.18 build timestamp. Using
+-- `pipeline_start` guarantees a single identical timestamp across every row in the table
+-- (matches the post-deploy reporting expectation at
+-- sql/recommendations/v5_18_fitment_recommendations.sql:1086).
+--
+-- pipeline_version is overwritten to 'v5.19' for EVERY row. The snapshot's 'v5.18' tag
+-- is dropped so the shared table satisfies COUNT(DISTINCT pipeline_version) = 1.
+-- ====================================================================================
+SET step_start = CURRENT_TIMESTAMP();
+
+EXECUTE IMMEDIATE FORMAT("""
+CREATE OR REPLACE TABLE %s
+CLUSTER BY email_lower AS
+SELECT
+  email_lower,
+  v1_year, v1_make, v1_model,
+  rec_part_1, rec1_price, rec1_score, rec1_image, rec1_type, rec1_pop_source,
+  rec_part_2, rec2_price, rec2_score, rec2_image, rec2_type, rec2_pop_source,
+  rec_part_3, rec3_price, rec3_score, rec3_image, rec3_type, rec3_pop_source,
+  rec_part_4, rec4_price, rec4_score, rec4_image, rec4_type, rec4_pop_source,
+  engagement_tier,
+  fitment_count,
+  @pipeline_start AS generated_at,
+  @pipeline_version AS pipeline_version
+FROM %s
+UNION ALL
+SELECT
+  email_lower,
+  v1_year, v1_make, v1_model,
+  rec_part_1, rec1_price, rec1_score, rec1_image, rec1_type, rec1_pop_source,
+  rec_part_2, rec2_price, rec2_score, rec2_image, rec2_type, rec2_pop_source,
+  rec_part_3, rec3_price, rec3_score, rec3_image, rec3_type, rec3_pop_source,
+  rec_part_4, rec4_price, rec4_score, rec4_image, rec4_type, rec4_pop_source,
+  engagement_tier,
+  fitment_count,
+  @pipeline_start AS generated_at,
+  @pipeline_version AS pipeline_version
+FROM %s
+""", tbl_final, tbl_fitment_snapshot, tbl_final_nf)
+USING pipeline_start AS pipeline_start, pipeline_version AS pipeline_version;
+
+SET step_end = CURRENT_TIMESTAMP();
+SELECT FORMAT('[Step 3.6] UNION ALL → shared final table: %d seconds', TIMESTAMP_DIFF(step_end, step_start, SECOND)) AS log;
+
+-- ====================================================================================
+-- VALIDATION: Final Output Checks (quick in-pipeline sanity; full gates in qa_checks.sql)
 -- ====================================================================================
 
 EXECUTE IMMEDIATE FORMAT("""
-SELECT 'final_non_fitment_recommendations' AS table_name,
-  COUNT(*) AS unique_users,
-  CASE WHEN COUNT(*) >= @min_final_users THEN 'OK' ELSE 'WARNING: Low final user count' END AS status
+SELECT 'final_vehicle_recommendations' AS table_name,
+  COUNT(*) AS total_rows,
+  COUNTIF(rec1_type = 'fitment')     AS fitment_rows,
+  COUNTIF(rec1_type = 'non_fitment') AS non_fitment_rows,
+  CASE WHEN COUNTIF(rec1_type = 'non_fitment') >= @min_final_users
+       THEN 'OK' ELSE 'WARNING: Low non-fitment user count' END AS status
 FROM %s
 """, tbl_final)
 USING min_final_users AS min_final_users;
 
+-- Disjointness: 0 emails should appear in both audience partitions
 EXECUTE IMMEDIATE FORMAT("""
-SELECT 'rec_count_distribution' AS check_name,
-  COUNTIF(rec_count = 1) AS with_1,
-  COUNTIF(rec_count = 2) AS with_2,
-  COUNTIF(rec_count = 3) AS with_3,
-  COUNTIF(rec_count = 4) AS with_4,
-  ROUND(AVG(rec_count), 2) AS avg_rec_count
+SELECT 'disjointness_check' AS check_name,
+  COUNT(*) AS violations
+FROM (
+  SELECT email_lower
+  FROM %s
+  GROUP BY email_lower
+  HAVING COUNT(DISTINCT rec1_type) > 1
+)
+""", tbl_final);
+
+-- Single pipeline_version: shared table must carry exactly one release tag
+EXECUTE IMMEDIATE FORMAT("""
+SELECT 'single_pipeline_version' AS check_name,
+  COUNT(DISTINCT pipeline_version) AS distinct_versions,
+  ARRAY_AGG(DISTINCT pipeline_version) AS versions_present
 FROM %s
 """, tbl_final);
 
+-- Price floor (applies to both audiences)
 EXECUTE IMMEDIATE FORMAT("""
-SELECT 'engagement_tier_distribution' AS check_name,
-  COUNTIF(engagement_tier = 'hot')      AS hot,
-  COUNTIF(engagement_tier = 'warm')     AS warm,
-  COUNTIF(engagement_tier = 'cold')     AS cold,
-  COUNTIF(engagement_tier = 'fallback') AS fallback,
-  COUNT(*) AS total_users
+SELECT 'price_floor_check' AS check_name,
+  COUNTIF(rec1_price < @min_price OR rec2_price < @min_price OR rec3_price < @min_price OR rec4_price < @min_price) AS violations,
+  @min_price AS min_price
 FROM %s
-""", tbl_final);
+""", tbl_final)
+USING min_price AS min_price;
 
-EXECUTE IMMEDIATE FORMAT("""
-SELECT 'dominant_signal_distribution' AS check_name,
-  COUNTIF(dominant_signal = 'cart')                AS cart,
-  COUNTIF(dominant_signal = 'view')                AS view,
-  COUNTIF(dominant_signal = 'purchase_recent')     AS purchase_recent,
-  COUNTIF(dominant_signal = 'purchase_historical') AS purchase_historical,
-  COUNTIF(dominant_signal = 'bestseller')          AS bestseller
-FROM %s
-""", tbl_final);
-
+-- Duplicate SKUs within a row (applies to both audiences)
 EXECUTE IMMEDIATE FORMAT("""
 SELECT 'duplicate_check' AS check_name,
   COUNTIF(
@@ -1084,14 +1517,7 @@ SELECT 'duplicate_check' AS check_name,
 FROM %s
 """, tbl_final);
 
-EXECUTE IMMEDIATE FORMAT("""
-SELECT 'price_floor_check' AS check_name,
-  COUNTIF(rec1_price < @min_price OR rec2_price < @min_price OR rec3_price < @min_price OR rec4_price < @min_price) AS violations,
-  @min_price AS min_price
-FROM %s
-""", tbl_final)
-USING min_price AS min_price;
-
+-- Score ordering within a row (applies to both audiences; scores ordered within audience)
 EXECUTE IMMEDIATE FORMAT("""
 SELECT 'score_ordering_check' AS check_name,
   COUNTIF(NOT (
@@ -1101,14 +1527,6 @@ SELECT 'score_ordering_check' AS check_name,
   )) AS violations
 FROM %s
 """, tbl_final);
-
--- Disjoint-from-v5.18 check: 0 emails should overlap with YMM universe
-EXECUTE IMMEDIATE FORMAT("""
-SELECT 'disjoint_from_v5_18_check' AS check_name,
-  COUNT(*) AS ymm_overlap_count
-FROM %s f
-JOIN %s y ON f.email_lower = y.email_lower
-""", tbl_final, tbl_ymm_users);
 
 -- Cleanup large intermediate tables (keep staged_signals for debug if needed)
 EXECUTE IMMEDIATE FORMAT("DROP TABLE IF EXISTS %s", tbl_staged_signals);
@@ -1122,6 +1540,7 @@ SELECT FORMAT('[COMPLETE] Pipeline %s finished in %d seconds',
 -- STEP 4: PRODUCTION DEPLOYMENT (Guarded — DEFAULT OFF)
 -- ====================================================================================
 -- Never runs unless deploy_to_production is explicitly flipped to TRUE above.
+-- Deploys the SHARED final_vehicle_recommendations table (fitment + non-fitment rows).
 -- ====================================================================================
 
 IF deploy_to_production THEN
@@ -1129,7 +1548,7 @@ IF deploy_to_production THEN
 
   EXECUTE IMMEDIATE FORMAT("""
   CREATE OR REPLACE TABLE `%s.%s.%s`
-  COPY `%s.%s.final_non_fitment_recommendations`
+  COPY `%s.%s.final_vehicle_recommendations`
   """, prod_project, prod_dataset, prod_table_name,
        target_project, target_dataset);
 
@@ -1150,7 +1569,7 @@ IF deploy_to_production THEN
   SELECT '[DEPLOYMENT COMPLETE] Pipeline finished successfully' AS log;
 
 ELSE
-  SELECT FORMAT('[SKIP] Production deployment skipped (deploy_to_production = FALSE). Output in %s.%s.final_non_fitment_recommendations',
+  SELECT FORMAT('[SKIP] Production deployment skipped (deploy_to_production = FALSE). Output in %s.%s.final_vehicle_recommendations',
     target_project, target_dataset) AS log;
 
 END IF;

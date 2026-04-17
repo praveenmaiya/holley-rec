@@ -1,7 +1,16 @@
 -- Holley Recommendations QA Validation Queries
 -- Run these checks after pipeline execution to validate data quality
--- Default dataset: auxia-reporting.temp_holley_v5_18
--- Note: email consent gating is intentionally not enforced in v5.18 pipeline output.
+-- Default dataset: auxia-reporting.temp_holley_v5_19 (shared fitment + non-fitment staging)
+--
+-- Shared-table scope (V5.19+):
+--   - Checks that apply to BOTH audiences have no WHERE filter
+--   - Checks that apply ONLY to fitment rows add `WHERE rec1_type = 'fitment'`
+--     (fitment_count, engagement_tier, YMM×SKU match, fitment_count-driven NULL rec4 check)
+--   - Checks that apply ONLY to non-fitment rows add `WHERE rec1_type = 'non_fitment'`
+--     (currently none beyond invariants covered by the per-audience go/no-go file)
+--   - Two new shared-table invariants at the bottom: single pipeline_version, cross-slot
+--     rec*_type consistency.
+-- Note: email consent gating is intentionally not enforced in pipeline output.
 
 -- ============================================================================
 -- QUICK HEALTH CHECK (run first)
@@ -11,21 +20,26 @@
 WITH
 user_count AS (
   SELECT COUNT(*) as total_users
-  FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
 ),
 score_stats AS (
   SELECT
     MIN(rec1_score) as min_score,
     MAX(rec1_score) as max_score,
     ROUND(AVG(rec1_score), 2) as avg_score
-  FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
 ),
 price_stats AS (
   SELECT
-    MIN(LEAST(rec1_price, rec2_price, rec3_price)) as min_price,
-    MAX(GREATEST(rec1_price, rec2_price, rec3_price, COALESCE(rec4_price, 0))) as max_price,
-    ROUND(AVG((rec1_price + rec2_price + rec3_price + COALESCE(rec4_price, 0)) / fitment_count), 2) as avg_price
-  FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+    MIN(LEAST(rec1_price, COALESCE(rec2_price, rec1_price), COALESCE(rec3_price, rec1_price))) as min_price,
+    MAX(GREATEST(rec1_price, COALESCE(rec2_price, 0), COALESCE(rec3_price, 0), COALESCE(rec4_price, 0))) as max_price,
+    -- Per-row avg price across populated slots; SAFE for non-fitment rows (fitment_count NULL)
+    ROUND(AVG(SAFE_DIVIDE(
+      COALESCE(rec1_price, 0) + COALESCE(rec2_price, 0) + COALESCE(rec3_price, 0) + COALESCE(rec4_price, 0),
+      IF(rec1_price IS NOT NULL, 1, 0) + IF(rec2_price IS NOT NULL, 1, 0) +
+      IF(rec3_price IS NOT NULL, 1, 0) + IF(rec4_price IS NOT NULL, 1, 0)
+    )), 2) as avg_price
+  FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
 ),
 duplicate_check AS (
   SELECT
@@ -36,7 +50,7 @@ duplicate_check AS (
         rec_part_1 = rec_part_4 OR rec_part_2 = rec_part_4 OR rec_part_3 = rec_part_4
       ))
     ) as duplicate_users
-  FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
 )
 SELECT
   'USERS' as metric,
@@ -65,7 +79,7 @@ SELECT
       rec_part_1 = rec_part_4 OR rec_part_2 = rec_part_4 OR rec_part_3 = rec_part_4
     ))
   ) as users_with_duplicates
-FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
+FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`;
 
 
 -- ============================================================================
@@ -73,13 +87,13 @@ FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
 -- ============================================================================
 -- Expected: 0 refurbished SKUs
 WITH all_recommended_skus AS (
-  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_1), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') as sku FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_1), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') as sku FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_2), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_2), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_3), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_3), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_4), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations` WHERE rec_part_4 IS NOT NULL
+  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_4), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations` WHERE rec_part_4 IS NOT NULL
 )
 SELECT
   COUNT(*) as total_skus,
@@ -97,13 +111,13 @@ LEFT JOIN (
 -- ============================================================================
 -- Expected: All counts = 0
 WITH all_recommended_skus AS (
-  SELECT rec_part_1 as sku FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT rec_part_1 as sku FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT rec_part_2 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT rec_part_2 FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT rec_part_3 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT rec_part_3 FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT rec_part_4 FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations` WHERE rec_part_4 IS NOT NULL
+  SELECT rec_part_4 FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations` WHERE rec_part_4 IS NOT NULL
 )
 SELECT
   COUNTIF(sku LIKE 'EXT-%') as ext_count,
@@ -115,18 +129,25 @@ FROM all_recommended_skus;
 
 
 -- ============================================================================
--- CHECK 4: Price Filter (>= $50)
+-- CHECK 4: Price Filter (>= $50) — applies to both audiences
 -- ============================================================================
 -- Expected: min_price >= $50, violations = 0
--- Handles NULL rec4 for 3-rec users
+-- Every populated rec*_price must be >= $50. Non-fitment rows may have NULL rec2..4
+-- if the fallback produced fewer slots; NULLs are not violations.
 SELECT
   COUNT(*) as total_users,
-  MIN(LEAST(rec1_price, rec2_price, rec3_price)) as min_price,
-  GREATEST(MAX(rec1_price), MAX(rec2_price), MAX(rec3_price), COALESCE(MAX(rec4_price), 0)) as max_price,
-  ROUND(AVG((rec1_price + rec2_price + rec3_price + COALESCE(rec4_price, 0)) / fitment_count), 2) as avg_price,
-  COUNTIF(rec1_price < 50 OR rec2_price < 50 OR rec3_price < 50) as below_50_violations_1_3,
+  MIN(LEAST(rec1_price, COALESCE(rec2_price, rec1_price), COALESCE(rec3_price, rec1_price))) as min_price,
+  GREATEST(MAX(rec1_price), COALESCE(MAX(rec2_price), 0), COALESCE(MAX(rec3_price), 0), COALESCE(MAX(rec4_price), 0)) as max_price,
+  ROUND(AVG(SAFE_DIVIDE(
+    COALESCE(rec1_price, 0) + COALESCE(rec2_price, 0) + COALESCE(rec3_price, 0) + COALESCE(rec4_price, 0),
+    IF(rec1_price IS NOT NULL, 1, 0) + IF(rec2_price IS NOT NULL, 1, 0) +
+    IF(rec3_price IS NOT NULL, 1, 0) + IF(rec4_price IS NOT NULL, 1, 0)
+  )), 2) as avg_price,
+  COUNTIF((rec1_price IS NOT NULL AND rec1_price < 50)
+       OR (rec2_price IS NOT NULL AND rec2_price < 50)
+       OR (rec3_price IS NOT NULL AND rec3_price < 50)) as below_50_violations_1_3,
   COUNTIF(rec4_price IS NOT NULL AND rec4_price < 50) as below_50_violations_4
-FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
+FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`;
 
 
 -- ============================================================================
@@ -135,13 +156,13 @@ FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
 -- Expected: https_pct = 100%, null_count = 0 for recs 1-3
 -- rec4 images may be NULL for 3-rec users
 WITH all_images AS (
-  SELECT rec1_image as image_url FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT rec1_image as image_url FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
   UNION ALL
-  SELECT rec2_image FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT rec2_image FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
   UNION ALL
-  SELECT rec3_image FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT rec3_image FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
   UNION ALL
-  SELECT rec4_image FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations` WHERE rec4_image IS NOT NULL
+  SELECT rec4_image FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations` WHERE rec4_image IS NOT NULL
 )
 SELECT
   COUNT(*) as total_images,
@@ -154,28 +175,32 @@ FROM all_images;
 
 
 -- ============================================================================
--- CHECK 6: Score Ordering (Monotonic Decrease) [I7 CRITICAL]
+-- CHECK 6: Score Ordering (Monotonic Decrease Within a Row) [I7 CRITICAL]
 -- ============================================================================
--- Expected: violations = 0, correct_ordering_pct = 100%
--- Handles NULL rec4 for 3-rec users
+-- Expected: violations = 0, correct_ordering_pct = 100%.
+-- Applies to both audiences (score semantics differ across audiences, but within a
+-- row scores must decrease). NULL-slot treatment: a NULL downstream score does not
+-- violate ordering.
 SELECT
   COUNT(*) as total_users,
   COUNTIF(
-    rec1_score >= rec2_score AND
-    rec2_score >= rec3_score AND
+    (rec2_score IS NULL OR rec1_score >= rec2_score) AND
+    (rec3_score IS NULL OR rec2_score >= rec3_score) AND
     (rec4_score IS NULL OR rec3_score >= rec4_score)
   ) as correctly_ordered,
   COUNTIF(NOT (
-    rec1_score >= rec2_score AND
-    rec2_score >= rec3_score AND
+    (rec2_score IS NULL OR rec1_score >= rec2_score) AND
+    (rec3_score IS NULL OR rec2_score >= rec3_score) AND
     (rec4_score IS NULL OR rec3_score >= rec4_score)
   )) as violations,
   ROUND(
-    COUNTIF(rec1_score >= rec2_score AND rec2_score >= rec3_score AND
-            (rec4_score IS NULL OR rec3_score >= rec4_score))
-    * 100.0 / COUNT(*), 2
+    COUNTIF(
+      (rec2_score IS NULL OR rec1_score >= rec2_score) AND
+      (rec3_score IS NULL OR rec2_score >= rec3_score) AND
+      (rec4_score IS NULL OR rec3_score >= rec4_score)
+    ) * 100.0 / COUNT(*), 2
   ) as correct_ordering_pct
-FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
+FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`;
 
 
 -- ============================================================================
@@ -183,13 +208,13 @@ FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
 -- ============================================================================
 -- Expected: max_same_parttype <= 2
 WITH user_recs_long AS (
-  SELECT email_lower, REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_1), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') as sku FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT email_lower, REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_1), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') as sku FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
   UNION ALL
-  SELECT email_lower, REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_2), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT email_lower, REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_2), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
   UNION ALL
-  SELECT email_lower, REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_3), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT email_lower, REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_3), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
   UNION ALL
-  SELECT email_lower, REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_4), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations` WHERE rec_part_4 IS NOT NULL
+  SELECT email_lower, REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_4), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations` WHERE rec_part_4 IS NOT NULL
 ),
 user_parttype_counts AS (
   SELECT
@@ -211,9 +236,10 @@ FROM user_parttype_counts;
 
 
 -- ============================================================================
--- CHECK 7b: Fitment Count = Filled Slots [I6 CRITICAL]
+-- CHECK 7b: Fitment Count = Filled Slots [I6 CRITICAL] — FITMENT ROWS ONLY
 -- ============================================================================
--- Expected: fitment_count is 3 or 4; must match actual non-null rec_part_* count
+-- Expected: fitment_count is 3 or 4 for fitment rows; must match actual non-null
+-- rec_part_* count. Non-fitment rows carry fitment_count=NULL and are excluded here.
 SELECT
   'fitment_count_check' AS check_name,
   COUNTIF(fitment_count = 3) AS with_3_recs,
@@ -222,13 +248,16 @@ SELECT
   COUNTIF(fitment_count = 3 AND rec_part_4 IS NOT NULL) AS miscount_3,
   COUNTIF(fitment_count = 4 AND rec_part_4 IS NULL) AS miscount_4,
   ROUND(AVG(fitment_count), 2) AS avg_fitment_count
-FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
+FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
+WHERE rec1_type = 'fitment';
 
 
 -- ============================================================================
--- CHECK 7c: Engagement Tier Binary Hot/Cold [I10 CRITICAL]
+-- CHECK 7c: Engagement Tier Binary Hot/Cold [I10 CRITICAL] — FITMENT ROWS ONLY
 -- ============================================================================
--- Expected: only "hot" and "cold", no NULLs, no other values
+-- Expected: only "hot" and "cold", no NULLs, no other values — for fitment rows.
+-- Non-fitment rows carry engagement_tier=NULL (V5.19 does not compute a tier) and
+-- are excluded here. A NULL engagement_tier in a fitment row is a violation.
 SELECT
   'engagement_tier_check' AS check_name,
   COUNTIF(engagement_tier = 'hot') AS hot_users,
@@ -236,23 +265,28 @@ SELECT
   COUNTIF(engagement_tier IS NULL) AS null_users,
   COUNTIF(engagement_tier NOT IN ('hot', 'cold')) AS invalid_values,
   COUNT(*) AS total_users
-FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
+FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
+WHERE rec1_type = 'fitment';
 
 
 -- ============================================================================
--- CHECK 7d: No Universal Products (fitment-only pipeline)
+-- CHECK 7d: Allowed rec*_type Vocabulary (shared table)
 -- ============================================================================
--- Expected: 0 universals across all slots
+-- Expected: 0 rows where any rec*_type falls outside {'fitment','non_fitment'}.
+-- Replaces the old "no universal products" check with the generalized vocabulary
+-- gate — 'universal' was never in the allowed set, and now 'non_fitment' is added.
 SELECT
-  'no_universals_check' AS check_name,
-  COUNTIF(rec1_type = 'universal') AS rec1_universal,
-  COUNTIF(rec2_type = 'universal') AS rec2_universal,
-  COUNTIF(rec3_type = 'universal') AS rec3_universal,
-  COUNTIF(rec4_type IS NOT NULL AND rec4_type = 'universal') AS rec4_universal,
-  CASE WHEN COUNTIF(rec1_type = 'universal') + COUNTIF(rec2_type = 'universal') +
-            COUNTIF(rec3_type = 'universal') + COUNTIF(rec4_type IS NOT NULL AND rec4_type = 'universal') = 0
-       THEN 'OK' ELSE 'ERROR: Universal products found' END AS status
-FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
+  'allowed_rec_type_vocab' AS check_name,
+  COUNTIF(rec1_type NOT IN ('fitment','non_fitment')) AS rec1_invalid,
+  COUNTIF(rec2_type IS NOT NULL AND rec2_type NOT IN ('fitment','non_fitment')) AS rec2_invalid,
+  COUNTIF(rec3_type IS NOT NULL AND rec3_type NOT IN ('fitment','non_fitment')) AS rec3_invalid,
+  COUNTIF(rec4_type IS NOT NULL AND rec4_type NOT IN ('fitment','non_fitment')) AS rec4_invalid,
+  CASE WHEN COUNTIF(rec1_type NOT IN ('fitment','non_fitment'))
+          + COUNTIF(rec2_type IS NOT NULL AND rec2_type NOT IN ('fitment','non_fitment'))
+          + COUNTIF(rec3_type IS NOT NULL AND rec3_type NOT IN ('fitment','non_fitment'))
+          + COUNTIF(rec4_type IS NOT NULL AND rec4_type NOT IN ('fitment','non_fitment')) = 0
+       THEN 'OK' ELSE 'ERROR: rec*_type outside allowed vocabulary' END AS status
+FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`;
 
 
 -- ============================================================================
@@ -260,13 +294,13 @@ FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
 -- ============================================================================
 -- Expected: >= 400 unique PartTypes
 WITH all_skus AS (
-  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_1), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') AS sku FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_1), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') AS sku FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_2), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_2), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_3), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_3), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
   UNION DISTINCT
-  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_4), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations` WHERE rec_part_4 IS NOT NULL
+  SELECT REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_4), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations` WHERE rec_part_4 IS NOT NULL
 )
 SELECT
   COUNT(DISTINCT cat.PartType) AS unique_part_types,
@@ -282,13 +316,13 @@ LEFT JOIN (
 
 
 -- ============================================================================
--- CHECK 7f: Authoritative Fitment Match (YMM x SKU)
+-- CHECK 7f: Authoritative Fitment Match (YMM x SKU) — FITMENT ROWS ONLY
 -- ============================================================================
--- Expected: mismatch_rows = 0, users_with_mismatch = 0
+-- Expected: mismatch_rows = 0, users_with_mismatch = 0 for fitment rows.
+-- Non-fitment rows (v1_year=v1_make=v1_model='UNKNOWN') are excluded — they have no
+-- vehicle to cross-reference against the fitment catalog.
 -- Both sides normalize with: (1) BRGP color suffix, (2) explicit finish/packaging suffixes
 -- so that e.g. 10416-KIT, 10416-BLK, 10416B all compare as 10416.
--- Only strips known suffixes: -KIT, -BLK, -POL, -CHR, -RAW (NOT generic -XX catch-all,
--- which destroys legitimate IDs like -GM/-FD engine platform, -RH/-LH hand, -67 jet size).
 WITH recs_long AS (
   SELECT
     email_lower,
@@ -296,20 +330,23 @@ WITH recs_long AS (
     UPPER(v1_make) AS v1_make,
     UPPER(v1_model) AS v1_model,
     REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_1), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '') AS sku
-  FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
+  WHERE rec1_type = 'fitment'
   UNION ALL
   SELECT email_lower, SAFE_CAST(v1_year AS INT64), UPPER(v1_make), UPPER(v1_model),
     REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_2), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '')
-  FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
+  WHERE rec1_type = 'fitment'
   UNION ALL
   SELECT email_lower, SAFE_CAST(v1_year AS INT64), UPPER(v1_make), UPPER(v1_model),
     REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_3), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '')
-  FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
+  FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
+  WHERE rec1_type = 'fitment'
   UNION ALL
   SELECT email_lower, SAFE_CAST(v1_year AS INT64), UPPER(v1_make), UPPER(v1_model),
     REGEXP_REPLACE(REGEXP_REPLACE(UPPER(rec_part_4), r'([0-9])[BRGP]$', r'\1'), r'(-KIT|-BLK|-POL|-CHR|-RAW)$', '')
-  FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`
-  WHERE rec_part_4 IS NOT NULL
+  FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
+  WHERE rec1_type = 'fitment' AND rec_part_4 IS NOT NULL
 ),
 fitment_map AS (
   SELECT DISTINCT
@@ -355,7 +392,7 @@ SELECT
     (rec_part_2 IS NULL AND rec_part_3 IS NOT NULL) OR
     (rec_part_3 IS NULL AND rec_part_4 IS NOT NULL)
   ) AS total_violations
-FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
+FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`;
 
 
 -- ============================================================================
@@ -374,7 +411,7 @@ SELECT
   COUNTIF(rec_part_3 IS NOT NULL AND (rec3_image IS NULL OR rec3_image = '')) +
   COUNTIF(rec_part_4 IS NOT NULL AND (rec4_image IS NULL OR rec4_image = ''))
   AS total_violations
-FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
+FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`;
 
 
 -- ============================================================================
@@ -391,14 +428,16 @@ SELECT
       rec4_pop_source IS NOT NULL
     )
   ) AS violations
-FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
+FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`;
 
 
 -- ============================================================================
--- CHECK 8: Score Distribution
+-- CHECK 8: Score Distribution — per audience (score semantics differ)
 -- ============================================================================
--- V5.18: Popularity-only scores (segment/make tiers can exceed 25)
+-- Fitment: popularity tiers (segment/make can exceed 25)
+-- Non-fitment: recency-weighted behavior score; bestseller floor ≈ 1.0
 SELECT
+  rec1_type AS audience,
   MIN(rec1_score) as min_score,
   MAX(rec1_score) as max_score,
   ROUND(AVG(rec1_score), 2) as avg_score,
@@ -408,18 +447,84 @@ SELECT
   COUNTIF(rec1_score < 0) as negative_scores,
   COUNTIF(rec1_score > 25) as above_25_monitor,
   COUNTIF(rec1_score > 40) as above_40_monitor
-FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
+FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
+GROUP BY rec1_type;
 
 
 -- ============================================================================
 -- CHECK 9: NULL rec4 Check (acceptable for 3-rec users)
 -- ============================================================================
+-- `unexpected_null_rec4` uses fitment_count and therefore only makes sense for
+-- fitment rows; non-fitment rows carry fitment_count=NULL. NULL rec4 is allowed
+-- for non-fitment rows that didn't reach 4 candidates after filters+fallback.
 SELECT
   'null_rec4_check' AS check_name,
   COUNTIF(rec_part_4 IS NULL) AS users_with_null_rec4,
   COUNTIF(rec_part_4 IS NOT NULL) AS users_with_rec4,
   COUNT(*) AS total_users,
   ROUND(COUNTIF(rec_part_4 IS NULL) * 100.0 / COUNT(*), 2) AS pct_null_rec4,
-  -- Verify NULL rec4 only for 3-rec users
-  COUNTIF(rec_part_4 IS NULL AND fitment_count != 3) AS unexpected_null_rec4
-FROM `auxia-reporting.temp_holley_v5_18.final_vehicle_recommendations`;
+  -- Fitment rows only: NULL rec4 must correspond to fitment_count = 3
+  COUNTIF(rec1_type = 'fitment' AND rec_part_4 IS NULL AND fitment_count != 3) AS unexpected_null_rec4_fitment
+FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`;
+
+
+-- ============================================================================
+-- CHECK 10: Single Pipeline Version [V5.19 shared-table invariant]
+-- ============================================================================
+-- Expected: distinct_versions = 1, value = 'v5.19'. The shared table is stamped
+-- with one release tag across every row (locked contract #4).
+SELECT
+  'single_pipeline_version_check' AS check_name,
+  COUNT(DISTINCT pipeline_version) AS distinct_versions,
+  ARRAY_AGG(DISTINCT pipeline_version) AS versions_present,
+  CASE WHEN COUNT(DISTINCT pipeline_version) = 1
+       THEN 'OK' ELSE 'ERROR: multiple pipeline_version values in shared table' END AS status
+FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`;
+
+
+-- ============================================================================
+-- CHECK 11: Cross-Slot rec*_type Consistency [V5.19 shared-table invariant]
+-- ============================================================================
+-- Expected: violations = 0. Within a row, every populated rec*_type must equal
+-- rec1_type. A row can't have rec1_type='fitment' and rec2_type='non_fitment'.
+SELECT
+  'cross_slot_type_consistency' AS check_name,
+  COUNTIF(rec2_type IS NOT NULL AND rec2_type != rec1_type) AS slot2_mismatch,
+  COUNTIF(rec3_type IS NOT NULL AND rec3_type != rec1_type) AS slot3_mismatch,
+  COUNTIF(rec4_type IS NOT NULL AND rec4_type != rec1_type) AS slot4_mismatch,
+  COUNTIF(
+    (rec2_type IS NOT NULL AND rec2_type != rec1_type) OR
+    (rec3_type IS NOT NULL AND rec3_type != rec1_type) OR
+    (rec4_type IS NOT NULL AND rec4_type != rec1_type)
+  ) AS total_violations
+FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`;
+
+
+-- ============================================================================
+-- CHECK 12: Disjointness — No Email in Both Audiences [V5.19 shared-table invariant]
+-- ============================================================================
+-- Expected: violations = 0. An email must appear in exactly one audience partition.
+SELECT
+  'disjoint_audiences_check' AS check_name,
+  COUNT(*) AS violations
+FROM (
+  SELECT email_lower
+  FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`
+  GROUP BY email_lower
+  HAVING COUNT(DISTINCT rec1_type) > 1
+);
+
+
+-- ============================================================================
+-- CHECK 13: Non-Fitment YMM Placeholder [V5.19 shared-table invariant]
+-- ============================================================================
+-- Expected: violations = 0. Non-fitment rows must stamp all three YMM fields as
+-- 'UNKNOWN' (locked contract #5). Fitment rows are exempt.
+SELECT
+  'non_fitment_ymm_placeholder' AS check_name,
+  COUNTIF(rec1_type = 'non_fitment' AND v1_year  != 'UNKNOWN') AS bad_year,
+  COUNTIF(rec1_type = 'non_fitment' AND v1_make  != 'UNKNOWN') AS bad_make,
+  COUNTIF(rec1_type = 'non_fitment' AND v1_model != 'UNKNOWN') AS bad_model,
+  COUNTIF(rec1_type = 'non_fitment' AND
+          (v1_year != 'UNKNOWN' OR v1_make != 'UNKNOWN' OR v1_model != 'UNKNOWN')) AS total_violations
+FROM `auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`;
