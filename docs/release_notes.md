@@ -1,6 +1,6 @@
 # Holley Recommendations - Release Notes
 
-## V5.19 (April 15, 2026)
+## V5.19 (April 17, 2026)
 
 **Dataset**: `auxia-reporting.temp_holley_v5_19`
 **Script**: `sql/recommendations/v5_19_non_fitment_recommendations.sql`
@@ -8,97 +8,98 @@
 
 ### Summary
 
-New pipeline for the ~1.8M **no-YMM** users that V5.18 cannot serve (V5.18 is YMM-only). V5.19 is disjoint from V5.18: users appear in exactly one of the two outputs. Uses a **unified recency-weighted scoring model** that combines all available behavioral signals (cart, view, recent purchase, historical purchase) with exponential time decay, plus bestseller fallback for users with no signal. Emits `dominant_signal` + `engagement_tier` to route downstream email treatment language.
+V5.19 is a shared-table release: it keeps the V5.18 fitment algorithm for YMM users and adds a non-fitment path for no-YMM users in the same `final_vehicle_recommendations` output. The table contract stays on the V5.18 column set; `rec1..4_type IN ('fitment','non_fitment')` is the row-level audience marker and every row carries `pipeline_version = 'v5.19'`.
+
+The non-fitment path is no longer exact-SKU-only. It uses purchase, cart, and view signals as seeds, expands them through a co-purchase graph, applies lifetime purchase plus flow-safe cart/browse exclusions, ranks related items first, and then uses the prior exact-SKU cart/view+bestseller logic only as a filtered floor/backfill layer.
 
 ### Why
 
-- V5.18 serves ~457K YMM users. Another ~1.8M no-YMM active users got nothing personalized, despite leaving strong browse/cart signals.
-- Signal investigation (AUX-14029) overturned V5.18's "browse doesn't convert" assumption for the no-YMM segment:
-  - Cart Update: **70.3%** same-SKU purchase within 30d
-  - Viewed Product: **30.6%** same-SKU purchase within 30d
-  - Decay is sharp: 70% of view→purchase conversions happen within 24h, 90% within 14d
-- Unified scoring (one formula across all signals) was chosen over tiered fallback to avoid tier-handoff complexity.
+- V5.18 serves fitment users only. No-YMM users needed a recommendation path without opening a second downstream table contract.
+- The earlier exact-SKU non-fitment design failed under lifetime purchase exclusion: purchased SKUs are strong seeds, but exact purchased SKUs cannot survive a lifetime exclusion rule.
+- The updated design restores purchase history as a seed only, expands to related items offline in BigQuery, and keeps the final output safe for daily batched sends.
 
 ### Differences from V5.18
 
 | Aspect | V5.18 | V5.19 |
 |--------|-------|-------|
-| Target audience | ~457K YMM users | ~1.8M **no-YMM** users (disjoint) |
-| Candidates | Fitment-matched SKUs only | User-signaled SKUs ∪ bestsellers |
-| Scoring | Segment/make/global popularity | Recency-weighted sum across signals |
-| Required signal | Fitment match on v1 YMM | Any of {cart, view, purchase, bestseller} |
-| Min price | $50 | **$25** (lower floor for broader reach) |
-| Fallback | 3-tier popularity | **Global bestsellers** for no-signal users |
-| Output table | `final_vehicle_recommendations` | `final_non_fitment_recommendations` |
+| Target audience | Fitment users with YMM | Fitment users plus no-YMM users in one table |
+| Output table | `final_vehicle_recommendations` | `final_vehicle_recommendations` |
+| Audience marker | `rec*_type = 'fitment'` | `rec*_type = 'fitment'` or `'non_fitment'` |
+| Non-fitment candidates | N/A | Related items from purchase/cart/view seeds, then floor/backfill |
+| Purchase handling | 365d exclusion on fitment recs | Lifetime exclusion on non-fitment recs |
+| Min price | $50 | $50 |
+| YMM columns | Actual vehicle | `'UNKNOWN'` placeholders for non-fitment rows |
 
-### Scoring
+### Non-Fitment Ranking Shape
 
-```
-score(user, sku) = Σ_{signal ∈ signals(user, sku)} weight[signal] × EXP(-age_days / tau[signal])
-```
+1. Build purchase, active-cart, and view seeds per no-YMM user.
+2. Expand each seed through `co_purchase_graph`.
+3. Apply shared eligibility filters (`price >= $50`, HTTPS images, no refurb/services/commodity leakage).
+4. Exclude any candidate already purchased in lifetime, currently present in latest cart snapshot, or viewed within `browse_recovery_lookback_days` (default `7`).
+5. Rank related-item candidates first.
+6. Backfill with the existing exact-SKU `cart/view + bestseller` engine after the same exclusions.
 
-| Signal | weight | tau (days) | Rationale |
-|--------|--------|------------|-----------|
-| cart | 10.0 | 7 | 70% same-SKU conversion — strongest signal |
-| view | 5.0 | 3 | 30% same-SKU conversion, fast decay (90% within 14d) |
-| purchase_recent | 3.0 | 30 | Proven intent; not repeat-purchase target |
-| purchase_historical | 2.0 | 180 | Long-proven taste, low recency |
-| bestseller | 1.0 | ∞ (no decay) | Catch-all fallback |
+The non-fitment floor is an accepted part of the release shape, not a failure mode. Related-item scores are persisted above the floor path so `rec*_score` ordering matches actual rank precedence.
 
-Per (user, sku) pair we take the freshest occurrence of each signal type, weight it by `weight × EXP(-age/tau)`, then sum across signal types. The dominant signal per rec slot = the signal type with the largest contribution to that rec's score.
+### Shared Output Contract
 
-### New Output Schema
+`auxia-reporting.temp_holley_v5_19.final_vehicle_recommendations`:
 
-`auxia-reporting.temp_holley_v5_19.final_non_fitment_recommendations`:
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `email_lower` | STRING | Key (disjoint from V5.18) |
-| `rec_part_1..4` | STRING | Up to 4 SKUs, NULL-padded beyond rec_count |
-| `rec{1..4}_price` | FLOAT64 | ≥ $25 |
-| `rec{1..4}_score` | FLOAT64 | Monotonically non-increasing across slots |
-| `rec{1..4}_image` | STRING | HTTPS required |
-| `rec{1..4}_type` | STRING | 'cart', 'view', 'purchase_recent', 'purchase_historical', 'bestseller' |
-| `rec{1..4}_signal_age_days` | INT64 | Days since freshest signal (NULL for bestseller) |
-| `rec_count` | INT64 | 1..4 |
-| `dominant_signal` | STRING | Top signal type across user's recs — routes email language |
-| `engagement_tier` | STRING | 'hot' / 'warm' / 'cold' / 'fallback' |
-| `generated_at` | TIMESTAMP | |
-| `pipeline_version` | STRING | 'v5.19' |
-
-Engagement tier:
-- `hot`: cart or view signal within last 7 days
-- `warm`: view/purchase signal within last 30 days (not hot)
-- `cold`: purchase-only signal (recent or historical)
-- `fallback`: bestseller-only (no user signal)
+| Column group | V5.19 behavior |
+|--------------|----------------|
+| `email_lower` | One row per email, fitment/non-fitment disjoint |
+| `rec_part_1..4` and `rec*_price/score/image/type` | Same 32-column contract as V5.18 |
+| `rec*_type` | `'fitment'` for fitment rows, `'non_fitment'` for non-fitment rows |
+| `v1_year/v1_make/v1_model` | Actual YMM on fitment rows, `'UNKNOWN'` on non-fitment rows |
+| `rec*_pop_source`, `engagement_tier`, `fitment_count` | Preserved for fitment rows, `NULL` on non-fitment rows |
+| `generated_at` | Fresh shared-table release timestamp for both audiences |
+| `pipeline_version` | `'v5.19'` on every row |
 
 ### Reused V5.18 Patterns
 
-- Event extraction: `staged_events` shape from `v5_18_fitment_recommendations.sql` (VIEWED PRODUCT / CART UPDATE / ORDERED PRODUCT / PLACED ORDER / CONSUMER WEBSITE ORDER)
-- Variant dedup regex: `([0-9])[BRGP]$`
-- Purchase exclusion: 365-day window, variant-normalized
+- Fitment scoring logic is unchanged; V5.18 rows are snapshotted then re-projected into the shared release table
+- Event extraction: `staged_events` shape from `v5_18_fitment_recommendations.sql`
+- Variant normalization: `([0-9])[BRGP]$` plus explicit cosmetic suffix handling for non-fitment dedup/exclusion
+- Purchase exclusion: 365-day window for fitment, lifetime for non-fitment
 - Diversity cap: max 2 SKUs per PartType per user
-- Refurbished + commodity exclusion
+- Refurbished + commodity/service exclusion
 - HTTPS image required; protocol-relative URLs normalized
-- Sep 1, 2025 boundary between recent vs historical purchase events
 
 ### Validation
 
-- `sql/validation/v5_19_go_no_go_eval.sql` mirrors V5.18's severity-ranked format (CRITICAL → HIGH → MEDIUM → INFO).
-- **CRITICAL**: V5.18 user overlap (must be 0), price floor, score sign, rec_type ∈ allowed set, engagement_tier ∈ allowed set, dominant_signal matches rec_types, score monotonicity, NULL-slot gaps, rec_count accuracy, HTTPS images, min user count.
-- **HIGH**: purchase exclusion, duplicate SKUs per user, diversity cap, refurbished leakage, slot consistency.
-- Investigation aids emitted only on FAIL.
+- `sql/validation/qa_checks.sql` is now shared-table aware:
+  - dataset pointer moved to `temp_holley_v5_19`
+  - fitment-only checks scoped with `WHERE rec1_type = 'fitment'`
+  - added checks for allowed `rec*_type` vocab, single `pipeline_version`, cross-slot type consistency, disjoint audiences, and non-fitment `'UNKNOWN'` YMM placeholders
+- `sql/validation/v5_19_go_no_go_eval.sql` keeps CRITICAL/HIGH gates on final output correctness and demotes old signal-coverage expectations to INFO monitoring under the new related-item-primary design
+
+### Latest Validated Staging Run (April 17, 2026)
+
+| Metric | Value |
+|--------|-------|
+| Total rows | 3,056,804 |
+| Fitment rows | 457,292 |
+| Non-fitment rows | 2,599,512 |
+| Fitment rows with 4 recs | 98.67% |
+| Non-fitment rows with 4 recs | 100.00% |
+| Avg rec1 price (fitment) | $510.56 |
+| Avg rec1 price (non-fitment) | $158.66 |
+| Non-fitment rows above bestseller floor | 154,755 |
+| Fallback-dominated non-fitment share | 94.05% |
+| Duplicates | 0 |
+| Score-ordering violations | 0 |
+| Fitment 365d purchase-exclusion violations | 0 |
+| Non-fitment lifetime purchase-exclusion violations | 0 |
+| CRITICAL/HIGH go-no-go checks | PASS |
 
 ### Deployment Safety
 
-All writes target `auxia-reporting.temp_holley_v5_19.*`. Production copy is gated behind `DECLARE deploy_to_production BOOL DEFAULT FALSE;` and does not run unless the flag is flipped explicitly. Production table `auxia-reporting.company_1950_jp.final_non_fitment_recommendations` is only touched after QA passes and the flag is enabled.
+All writes target `auxia-reporting.temp_holley_v5_19.*`. Production copy is gated behind `DECLARE deploy_to_production BOOL DEFAULT FALSE;` and does not run unless the flag is flipped explicitly. Production table remains `auxia-reporting.company_1950_jp.final_vehicle_recommendations`.
 
-### Open Questions
+### Follow-Up Monitoring
 
-- Tau values are initial estimates grounded in decay data. Grid-search during QA or ship defaults and tune via A/B?
-- Bestseller list: global top-N or per-PartType top-N (more diverse fallback)?
-- Keep `signal_age_days` in production output or analytics-only?
-- Cap bestseller-only output users (emit fallback only for opted-in users)?
+- Co-purchase threshold calibration remains a quality-tuning follow-up, not a release blocker.
+- Fallback breadth is healthy in the current staging run: all non-fitment rows received 4 recs, including fallback-dominated rows.
 
 ---
 

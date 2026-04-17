@@ -8,6 +8,7 @@ Historical record of recommendation pipeline runs with comparison stats.
 
 | Date | Version | Users | Notes |
 |------|---------|-------|-------|
+| Apr 17, 2026 | v5.19 | 3,056,804 | Shared fitment + non-fitment staging run, all CRITICAL/HIGH checks PASS |
 | Dec 11, 2025 | v5.6.2 (v3) | 456,119 | Commodity filter ($50 min, PartType exclusions) |
 | Dec 11, 2025 | v5.6.1 (v2) | 458,826 | Variant dedup fix |
 | Dec 11, 2025 | v5.6.1 (v1) | 459,540 | Sep 1 intent window |
